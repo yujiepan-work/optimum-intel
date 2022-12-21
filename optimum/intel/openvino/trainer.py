@@ -103,6 +103,7 @@ class OVTrainer(Trainer):
         preprocess_logits_for_metrics: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = None,
         ov_config: Optional[OVConfig] = None,
         feature: Optional[str] = None,
+        onnx_config: Optional[OnnxConfig] = None,
     ):
 
         super().__init__(
@@ -121,12 +122,13 @@ class OVTrainer(Trainer):
 
         self.ov_config = ov_config
         self.feature = feature
+        self.onnx_config = onnx_config
         self.teacher = None
         if teacher_model is not None:
             self.teacher = teacher_model.to(args.device)
             self.teacher.eval()
             self.distillation_weight = args.distillation_weight
-            self.temperature = args.distillation_temperature 
+            self.temperature = args.distillation_temperature
         self.compression_controller = None
         self.loss_counter = 0
         self.metrics = defaultdict(float)
@@ -347,7 +349,7 @@ class OVTrainer(Trainer):
         for epoch in range(epochs_trained, num_train_epochs):
             if self.compression_controller is not None:
                 self.compression_controller.scheduler.epoch_step()
-                print(self.compression_controller.statistics().to_str())
+                # print(self.compression_controller.statistics().to_str())
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
             elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
@@ -387,7 +389,7 @@ class OVTrainer(Trainer):
 
                 if step % args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(args, self.state, self.control)
-                    # TODO: this was the original adaptation for nncf scheduler stepping. 
+                    # TODO: this was the original adaptation for nncf scheduler stepping.
                     # To review if this is the right place or at line 439
                     # if self.compression_controller is not None:
                     #     # Must be called at the beginning of each training step to prepare the compression method
@@ -520,22 +522,20 @@ class OVTrainer(Trainer):
 
         return TrainOutput(self.state.global_step, train_loss, metrics)
 
-
     def compute_distillation_loss(self, inputs, student_logits):
         with torch.no_grad():
             teacher_logits = self.teacher(**inputs)
         return F.kl_div(
-                input=F.log_softmax(student_logits / self.temperature, dim=-1),
-                target=F.softmax(teacher_logits / self.temperature, dim=-1),
-                reduction="batchmean"
-                ) * (self.temperature ** 2)
-
+            input=F.log_softmax(student_logits / self.temperature, dim=-1),
+            target=F.softmax(teacher_logits / self.temperature, dim=-1),
+            reduction="batchmean"
+        ) * (self.temperature ** 2)
 
     def compute_loss(self, model, inputs, return_outputs=False):
         self.loss_counter += 1
         if self.teacher is None:
             retval = super().compute_loss(model, inputs, return_outputs)
-        
+
             if return_outputs is True:
                 loss, outputs = retval
             else:
@@ -552,9 +552,8 @@ class OVTrainer(Trainer):
             compression_loss = self.compression_controller.loss()
             loss += compression_loss
             self.metrics["compression_loss"] = compression_loss.item()
-            
-        return (loss, outputs) if return_outputs else loss
 
+        return (loss, outputs) if return_outputs else loss
 
     def log(self, logs):
         if self.loss_counter != 0:
@@ -565,7 +564,6 @@ class OVTrainer(Trainer):
             self.metrics = defaultdict(float)
 
         return super().log(logs)
-
 
     def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
         if self.control.should_log:
@@ -650,8 +648,11 @@ class OVTrainer(Trainer):
             output_path = os.path.join(output_dir, OV_XML_FILE_NAME)
             self.compression_controller.prepare_for_export()
             model_type = self.model.config.model_type.replace("_", "-")
-            onnx_config_cls = FeaturesManager._SUPPORTED_MODEL_TYPE[model_type][self.feature]
-            onnx_config = onnx_config_cls(self.model.config)
+            if self.onnx_config is None:
+                onnx_config_cls = FeaturesManager._SUPPORTED_MODEL_TYPE[model_type][self.feature]
+                onnx_config = onnx_config_cls(self.model.config)
+            else:
+                onnx_config = self.onnx_config
             use_external_data_format = (
                 onnx_config.use_external_data_format(self.model.num_parameters()) or self.ov_config.save_onnx_model
             )
