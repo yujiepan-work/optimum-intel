@@ -32,6 +32,16 @@ from optimum.intel.openvino.quantization import OVQuantizer
 from optimum.intel.openvino.trainer import OVTrainer
 from parameterized import parameterized
 
+from nncf.torch.dynamic_graph.graph_tracer import create_mock_tensor
+
+def generate_mock_tokens(input_infos):   
+    mock_tokens = dict()
+    for info in input_infos:
+        single_batch_info = copy.copy(info)
+        input_shape = tuple([1] + list(info.shape)[1:])
+        single_batch_info.shape = input_shape
+        mock_tokens[info.keyword] = create_mock_tensor(single_batch_info, 'cpu')
+    return mock_tokens
 
 class OVQuantizerTest(unittest.TestCase):
     SUPPORTED_ARCHITECTURES_WITH_EXPECTED_QUANTIZED_MATMULS = (
@@ -86,11 +96,11 @@ MOVEMENT_SPARSITY_CONFIG_FOR_BERT = {
         "enable_structured_masking": True
     },
     "sparse_structure_by_scopes": [
-        {"mode": "block", "sparse_factors": [32, 32], "target_scopes": "{re}.*BertAttention*"},
+        {"mode": "block", "sparse_factors": [32, 32], "target_scopes": "{re}.*BertAttention.*"},
         {"mode": "per_dim", "axis": 0, "target_scopes": "{re}.*BertIntermediate.*"},
         {"mode": "per_dim", "axis": 1, "target_scopes": "{re}.*BertOutput.*"}
     ],
-    "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*qa_outputs*", "{re}.*LayerNorm.*",
+    "ignored_scopes": ["{re}.*NNCFEmbedding", "{re}.*LayerNorm.*",
                        "{re}.*pooler.*", "{re}.*classifier.*"]
 }
 
@@ -141,9 +151,6 @@ class OVTrainerTest(unittest.TestCase):
             self.assertEqual(expected_fake_quantize, num_fake_quantize)
             self.assertEqual(expected_int8, num_int8)
 
-            tokens = tokenizer("This is a sample input", return_tensors="pt")
-            outputs = model(**tokens)
-            self.assertTrue("logits" in outputs)
 
     def build_glue_sst_trainer(
         self,
@@ -177,6 +184,7 @@ class OVTrainerTest(unittest.TestCase):
                 num_train_epochs=3.0,
                 do_train=True,
                 do_eval=True,
+                logging_steps=1,
                 **training_args
             ),
             train_dataset=train_dataset,
@@ -219,7 +227,7 @@ class OVTrainerTest(unittest.TestCase):
             )
             train_results = trainer.train()
             trainer.save_model()
-            self.assertIn('distillation_loss', train_results.metrics)
+            self.assertIn('distillation_loss', trainer.compression_metrics)
 
             ovmodel = OVModelForSequenceClassification.from_pretrained(tmp_dir)
             num_fake_quantize, num_int8 = self.count_quantization_op_number(ovmodel)
@@ -275,9 +283,9 @@ class OVTrainerTest(unittest.TestCase):
                 model=model,
                 ov_config=ov_config,
             )
-            train_results = trainer.train()
+            _ = trainer.train()
             trainer.save_model()
-            self.assertIn('compression_loss', train_results.metrics)
+            self.assertIn('compression_loss', trainer.compression_metrics)
 
             state_dict = torch.load(Path(tmp_dir, WEIGHTS_NAME), map_location='cpu')
             num_binary_masks = sum(key.endswith('_binary_mask') for key in state_dict)
@@ -288,7 +296,7 @@ class OVTrainerTest(unittest.TestCase):
             self.assertEqual(expected_fake_quantize, num_fake_quantize)
             self.assertEqual(expected_int8, num_int8)
 
-            tokens = tokenizer("This is a sample input", return_tensors="pt")
+            tokens = generate_mock_tokens(trainer.model.input_infos)
             outputs = ovmodel(**tokens)
             self.assertTrue("logits" in outputs)
 
@@ -315,8 +323,8 @@ class OVTrainerTest(unittest.TestCase):
             )
             train_results = trainer.train()
             trainer.save_model()
-            self.assertIn('distillation_loss', train_results.metrics)
-            self.assertIn('compression_loss', train_results.metrics)
+            self.assertIn('distillation_loss', trainer.compression_metrics)
+            self.assertIn('compression_loss', trainer.compression_metrics)
 
             state_dict = torch.load(Path(tmp_dir, WEIGHTS_NAME), map_location='cpu')
             num_binary_masks = sum(key.endswith('_binary_mask') for key in state_dict)
@@ -327,6 +335,6 @@ class OVTrainerTest(unittest.TestCase):
             self.assertEqual(expected_fake_quantize, num_fake_quantize)
             self.assertEqual(expected_int8, num_int8)
 
-            tokens = tokenizer("This is a sample input", return_tensors="pt")
+            tokens = generate_mock_tokens(trainer.model.input_infos)
             outputs = ovmodel(**tokens)
             self.assertTrue("logits" in outputs)
