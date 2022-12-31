@@ -225,7 +225,7 @@ class OVTrainerTest(unittest.TestCase):
                 teacher_model=teacher_model,
                 ov_config=ov_config,
             )
-            train_results = trainer.train()
+            trainer.train()
             trainer.save_model()
             self.assertIn('distillation_loss', trainer.compression_metrics)
 
@@ -261,7 +261,7 @@ class OVTrainerTest(unittest.TestCase):
             self.assertEqual(expected_binary_masks, num_binary_masks)
 
             ovmodel = OVModelForSequenceClassification.from_pretrained(tmp_dir)
-            tokens = tokenizer("This is a sample input", return_tensors="pt")
+            tokens = generate_mock_tokens(trainer.model.input_infos)
             outputs = ovmodel(**tokens)
             self.assertTrue("logits" in outputs)
 
@@ -283,7 +283,7 @@ class OVTrainerTest(unittest.TestCase):
                 model=model,
                 ov_config=ov_config,
             )
-            _ = trainer.train()
+            trainer.train()
             trainer.save_model()
             self.assertIn('compression_loss', trainer.compression_metrics)
 
@@ -321,7 +321,7 @@ class OVTrainerTest(unittest.TestCase):
                 teacher_model=teacher_model,
                 ov_config=ov_config,
             )
-            train_results = trainer.train()
+            trainer.train()
             trainer.save_model()
             self.assertIn('distillation_loss', trainer.compression_metrics)
             self.assertIn('compression_loss', trainer.compression_metrics)

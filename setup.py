@@ -31,7 +31,7 @@ QUALITY_REQUIRES = [
 EXTRAS_REQUIRE = {
     "neural-compressor": ["neural-compressor>=2.0.0", "onnx", "onnxruntime"],
     "openvino": ["openvino-dev>=2022.3.0", "transformers>=4.20.0", "onnx"],
-    "nncf": ["nncf"],
+    "nncf": ["nncf @ git+https://github.com/openvinotoolkit/nncf"], #TODO: make nncf>=2.4 once it is released. JPQD requires this version or current develop branch
     "ipex": ["intel_extension_for_pytorch"],
     "diffusers": ["diffusers"],
     "quality": QUALITY_REQUIRES,
