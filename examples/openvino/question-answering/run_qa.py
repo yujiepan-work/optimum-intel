@@ -51,6 +51,10 @@ from optimum.intel.openvino import OVConfig, OVTrainingArguments
 from trainer_qa import QuestionAnsweringOVTrainer
 from utils_qa import postprocess_qa_predictions
 
+# put this at the end of imports
+from nncf_patch_for_mobilebert import nncf_patch_for_mobilebert
+
+NUM_HIDDEN_LAYERS = 14
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0")
@@ -218,6 +222,7 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
 
 
+@nncf_patch_for_mobilebert()
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -323,6 +328,7 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
+        num_hidden_layers=NUM_HIDDEN_LAYERS,
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
@@ -339,6 +345,8 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+
+    logger.info(model)
 
     teacher_model = None
     if training_args.teacher_model_or_path is not None:
@@ -618,6 +626,7 @@ def main():
         ov_config = OVConfig(compression=compression)
     else:
         ov_config = OVConfig()
+    ov_config.log_dir = training_args.output_dir
 
     # Initialize our Trainer
     trainer = QuestionAnsweringOVTrainer(
