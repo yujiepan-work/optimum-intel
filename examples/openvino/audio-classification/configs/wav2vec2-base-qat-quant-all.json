@@ -5,7 +5,7 @@
     "overflow_fix": "disable",
     "initializer": {
         "range": {
-            "num_init_samples": 256,
+            "num_init_samples": 512,
             "type": "percentile",
             "params": {
                 "min_percentile": 0.01,
