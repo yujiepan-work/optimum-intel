@@ -53,6 +53,7 @@ from utils_qa import postprocess_qa_predictions
 
 # put this at the end of imports
 from nncf_patch_for_mobilebert import nncf_patch_for_mobilebert
+from nncf_patch_for_mobilebert import get_cosine_with_decayed_hard_restarts_schedule_with_warmup
 
 NUM_HIDDEN_LAYERS = 14
 
@@ -242,7 +243,7 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
                 last_epoch = log["epoch"]
         if last_eval_f1 is None or self.best_f1 >= last_eval_f1:
             return
-        after_epoch = os.environ.get('YUJIE_SAVE_BEST_AFTER_EPOCH', '-1')
+        after_epoch = os.environ.get("YUJIE_SAVE_BEST_AFTER_EPOCH", "-1")
         if last_epoch is None or last_epoch <= float(after_epoch):
             return
         self.best_f1 = last_eval_f1
@@ -253,7 +254,7 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
         folder.mkdir(parents=True, exist_ok=True)
         if self.trainer.is_world_process_zero():
             self.trainer.save_model(output_dir=folder.as_posix(), _internal_call=True)
-            state.save_to_json(Path(folder, 'trainer_states.json').as_posix())
+            state.save_to_json(Path(folder, "trainer_states.json").as_posix())
         return control
 
 
@@ -688,21 +689,20 @@ def main():
         from transformers.optimization import get_cosine_with_hard_restarts_schedule_with_warmup
 
         def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
-            """
-            Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
-            passed as an argument.
-
-            Args:
-                num_training_steps (int): The number of training steps to do.
-            """
             if self.lr_scheduler is None:
-                num_cycles = int(os.environ.get('YUJIE_COSINE_CYCLES', '3'))
-                logger.info(f"Using the {num_cycles}-cycle cosine_with_restarts!")
-                self.lr_scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+                cosine_cycle_ratios = os.environ.get("YUJIE_COSINE_CYCLE_RATIOS", "16,6,6,6")
+                cosine_cycle_ratios = [float(r) for r in cosine_cycle_ratios.strip().split(",")]
+                cosine_cycle_decays = os.environ.get("YUJIE_COSINE_CYCLE_DECAYS", "1,0.7,0.5,0.5")
+                cosine_cycle_decays = [float(d) for d in cosine_cycle_decays.strip().split(",")]
+                logger.info(
+                    f"Using decayed cosine restarts: ratio={cosine_cycle_ratios}, decay={cosine_cycle_decays}."
+                )
+                self.lr_scheduler = get_cosine_with_decayed_hard_restarts_schedule_with_warmup(
                     optimizer=self.optimizer if optimizer is None else optimizer,
                     num_warmup_steps=self.args.get_warmup_steps(num_training_steps),
                     num_training_steps=num_training_steps,
-                    num_cycles=num_cycles,
+                    cycle_ratios=cosine_cycle_ratios,
+                    cycle_decays=cosine_cycle_decays,
                 )
             return self.lr_scheduler
 

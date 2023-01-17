@@ -1,8 +1,11 @@
-import logging
+import bisect
 from contextlib import contextmanager
+import logging
+import math
 from typing import Dict, List
 from unittest.mock import patch
 
+from torch.optim.lr_scheduler import LambdaLR
 import nncf
 from nncf.common.logging.logger import set_log_level
 from nncf.common.scopes import matches_any
@@ -20,6 +23,38 @@ from nncf.experimental.torch.sparsity.movement.structured_mask_strategy import (
 )
 from nncf.torch.nncf_network import NNCFNetwork
 from nncf.torch.sparsity.base_algo import SparseModuleInfo
+
+
+def get_cosine_with_decayed_hard_restarts_schedule_with_warmup(
+    optimizer,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    cycle_ratios=[1, 1, 1, 1],
+    cycle_decays=[1, 1, 1, 1],
+    last_epoch: int = -1,
+):
+    assert len(cycle_ratios) == len(cycle_decays)
+    total_cosine_steps = max(1, num_training_steps - num_warmup_steps)
+    cycle_starting_steps = [0]
+    _current_ratio = 0
+    for ratio in cycle_ratios:
+        _current_ratio += ratio
+        starting_step = int(total_cosine_steps * _current_ratio / sum(cycle_ratios))
+        cycle_starting_steps.append(starting_step)
+
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        if current_step >= num_training_steps:
+            return 0.0
+        cycle_idx = bisect.bisect_right(cycle_starting_steps, current_step - num_warmup_steps)
+        steps_in_cycle = current_step - num_warmup_steps - cycle_starting_steps[cycle_idx - 1]
+        total_steps_in_cycle = cycle_starting_steps[cycle_idx] - cycle_starting_steps[cycle_idx - 1]
+        progress = float(steps_in_cycle) / float(total_steps_in_cycle)
+        decay = float(cycle_decays[cycle_idx - 1])
+        return decay * max(0.0, 0.5 * (1.0 + math.cos(math.pi * (progress % 1.0))))
+
+    return LambdaLR(optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
 
 
 _original_create_structured_mask_context_groups = StructuredMaskHandler._create_structured_mask_context_groups
