@@ -242,10 +242,10 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
             if "epoch" in log:
                 last_epoch = log["epoch"]
         if last_eval_f1 is None or self.best_f1 >= last_eval_f1:
-            return
+            return control
         after_epoch = os.environ.get("YUJIE_SAVE_BEST_AFTER_EPOCH", "-1")
         if last_epoch is None or last_epoch <= float(after_epoch):
-            return
+            return control
         self.best_f1 = last_eval_f1
         folder = Path(args.output_dir, "best_model").absolute()
         if folder.exists():
