@@ -119,9 +119,7 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "An optional input test data file to evaluate the perplexity on (a text file)."},
     )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
+    overwrite_cache: bool = field(default=False, metadata={"help": "Overwrite the cached training and evaluation sets"})
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
@@ -220,6 +218,43 @@ class DataTrainingArguments:
             if self.test_file is not None:
                 extension = self.test_file.split(".")[-1]
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
+
+
+class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
+    from transformers.trainer_callback import TrainerState, TrainerControl
+    from transformers import TrainingArguments
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.best_f1 = -1.0
+
+    def register_trainer(self, trainer: QuestionAnsweringOVTrainer):
+        self.trainer = trainer
+
+    def on_save(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        super().on_save(args, state, control, **kwargs)
+        last_eval_f1 = None
+        last_epoch = None
+        for log in state.log_history:
+            if "eval_f1" in log:
+                last_eval_f1 = log["eval_f1"]
+            if "epoch" in log:
+                last_epoch = log["epoch"]
+        if last_eval_f1 is None or self.best_f1 >= last_eval_f1:
+            return
+        after_epoch = os.environ.get('YUJIE_SAVE_BEST_AFTER_EPOCH', '-1')
+        if last_epoch is None or last_epoch <= float(after_epoch):
+            return
+        self.best_f1 = last_eval_f1
+        folder = Path(args.output_dir, "best_model").absolute()
+        if folder.exists():
+            import shutil
+            shutil.rmtree(folder.resolve().as_posix())
+        folder.mkdir(parents=True, exist_ok=True)
+        if self.trainer.is_world_process_zero():
+            self.trainer.save_model(output_dir=folder.as_posix(), _internal_call=True)
+            state.save_to_json(Path(folder, 'trainer_states.json').as_posix())
+        return control
 
 
 @nncf_patch_for_mobilebert()
@@ -626,9 +661,11 @@ def main():
         ov_config = OVConfig(compression=compression)
     else:
         ov_config = OVConfig()
+        ov_config.compression = []
     ov_config.log_dir = training_args.output_dir
 
     # Initialize our Trainer
+    save_best_callback = SaveBestModelCallback()
     trainer = QuestionAnsweringOVTrainer(
         model=model,
         teacher_model=teacher_model,
@@ -642,7 +679,60 @@ def main():
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
+        callbacks=[save_best_callback],
     )
+    save_best_callback.register_trainer(trainer)
+
+    if training_args.lr_scheduler_type == "cosine_with_restarts":
+        import torch
+        from transformers.optimization import get_cosine_with_hard_restarts_schedule_with_warmup
+
+        def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
+            """
+            Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
+            passed as an argument.
+
+            Args:
+                num_training_steps (int): The number of training steps to do.
+            """
+            if self.lr_scheduler is None:
+                num_cycles = int(os.environ.get('YUJIE_COSINE_CYCLES', '3'))
+                logger.info(f"Using the {num_cycles}-cycle cosine_with_restarts!")
+                self.lr_scheduler = get_cosine_with_hard_restarts_schedule_with_warmup(
+                    optimizer=self.optimizer if optimizer is None else optimizer,
+                    num_warmup_steps=self.args.get_warmup_steps(num_training_steps),
+                    num_training_steps=num_training_steps,
+                    num_cycles=num_cycles,
+                )
+            return self.lr_scheduler
+
+        trainer.__class__.create_scheduler = create_scheduler
+
+    # load pretrained weights:
+    path = os.environ.get("YUJIE_LOADMODEL", None)
+    if path is not None:
+        #  = "/nvme2/yujiepan/workspace/jpqd-test/LOGS/optimum-mobilebert-qa/0115-993e_lr0.0001_epo16_pr3-10_reg0.07_warm0.1/pytorch_model.bin"
+        import torch
+        from nncf.experimental.torch.sparsity.movement.algo import MovementSparsityController
+        from nncf.experimental.torch.sparsity.movement.scheduler import MovementSchedulerStage
+        from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmController
+        from transformers.optimization import get_cosine_with_hard_restarts_schedule_with_warmup
+
+        state_dict = torch.load(path, map_location="cpu")
+        load_result = trainer.model.load_state_dict(state_dict)
+        logger.info("Reload info %s", load_result)
+        pruning_controller = None
+        if isinstance(trainer.compression_controller, PTCompositeCompressionAlgorithmController):
+            for child_controller in trainer.compression_controller.child_ctrls:
+                if isinstance(child_controller, MovementSparsityController):
+                    pruning_controller = child_controller
+        elif isinstance(trainer.compression_controller, MovementSparsityController):
+            pruning_controller = trainer.compression_controller
+        pruning_controller.reset_independent_structured_mask()
+        pruning_controller.resolve_structured_mask()
+        pruning_controller.populate_structured_mask()
+        pruning_controller.freeze()
+        logger.info("Movement sparsity controller fixed.")
 
     # Training
     if training_args.do_train:
