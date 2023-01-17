@@ -690,7 +690,7 @@ def main():
 
         def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
             if self.lr_scheduler is None:
-                cosine_cycle_ratios = os.environ.get("YUJIE_COSINE_CYCLE_RATIOS", "16,6,6,6")
+                cosine_cycle_ratios = os.environ.get("YUJIE_COSINE_CYCLE_RATIOS", "15,6,5,4")
                 cosine_cycle_ratios = [float(r) for r in cosine_cycle_ratios.strip().split(",")]
                 cosine_cycle_decays = os.environ.get("YUJIE_COSINE_CYCLE_DECAYS", "1,0.7,0.5,0.5")
                 cosine_cycle_decays = [float(d) for d in cosine_cycle_decays.strip().split(",")]
