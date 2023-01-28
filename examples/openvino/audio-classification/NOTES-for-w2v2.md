@@ -1,0 +1,1 @@
+More info about this branch (quantized input) is in https://github.com/intel-sandbox/yujiepan.project.jpqd-notes/blob/e239ec66b6c4e5ef564af28bc92cba8338cdf745/20230120-wav2vec2-with-more-aggressive-quantization.one
