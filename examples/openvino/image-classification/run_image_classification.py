@@ -301,6 +301,9 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+    size = feature_extractor.size
+    if isinstance(size, dict) and len(set(size.values())) == 1:
+        feature_extractor.size = next(iter(size.values()))
 
     # Define torchvision transforms to be applied to each image.
     normalize = Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
