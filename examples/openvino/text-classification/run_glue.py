@@ -49,6 +49,7 @@ import evaluate
 import jstyleson as json
 from nncf.common.utils.os import safe_open
 from optimum.intel.openvino import OVConfig, OVTrainer, OVTrainingArguments
+from decayed_cosine_lr_scheduler import patch_decayed_cosine_lr_scheduler
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -207,6 +208,7 @@ class ModelArguments:
     )
 
 
+@patch_decayed_cosine_lr_scheduler()
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
