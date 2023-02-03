@@ -72,8 +72,8 @@ def create_scheduler(self, cosine_cycle_ratios, cosine_cycle_decays,
 def patch_decayed_cosine_lr_scheduler():
     original_argv = sys.argv
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cosine_cycle_ratios', type=str, required=True)
-    parser.add_argument('--cosine_cycle_decays', type=str, required=True)
+    parser.add_argument('--cosine_cycle_ratios', type=str, default=1)
+    parser.add_argument('--cosine_cycle_decays', type=str, default=1)
     cosine_args, others = parser.parse_known_args()
     sys.argv = [original_argv[0]] + others
 
