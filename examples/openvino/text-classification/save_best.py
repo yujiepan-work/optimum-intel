@@ -8,6 +8,7 @@ import transformers
 from transformers import TrainingArguments
 from transformers.trainer_callback import TrainerControl, TrainerState
 from optimum.intel.openvino import OVTrainer
+import json
 
 
 class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
@@ -30,16 +31,16 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
                 last_eval_metric = log[f"eval_{self.metric_for_best_model}"]
             if "epoch" in log:
                 last_epoch = log["epoch"]
-            if 'compression/magnitude_sparsity/target_sparsity_level' in log:
-                last_sparisty = log['compression/magnitude_sparsity/target_sparsity_level']
+            if "compression/magnitude_sparsity/target_sparsity_level" in log:
+                last_sparisty = log["compression/magnitude_sparsity/target_sparsity_level"]
         if last_eval_metric is None or self.best_metric >= last_eval_metric:
-            print('Skip saving due to not best metric')
+            print("Skip saving due to not best metric")
             return control
         if last_sparisty is None or last_sparisty < 0.8:
-            print('Skip saving due to not 0.8 sparsity')
+            print("Skip saving due to not 0.8 sparsity")
             return control
         if last_epoch is None or last_epoch <= float(self.save_best_model_after_epoch):
-            print('Skip saving due to too early epoch')
+            print("Skip saving due to too early epoch")
             return control
 
         self.best_metric = last_eval_metric
@@ -50,6 +51,8 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
         if self.trainer.is_world_process_zero():
             self.trainer.save_model(output_dir=folder.as_posix(), _internal_call=True)
             state.save_to_json(Path(folder, "trainer_state.json").as_posix())
+            with open(Path(folder, "best_metric.json"), "w", encoding="utf-8") as f:
+                json.dump({"best_metric": self.best_metric}, f)
         return control
 
 
