@@ -1,22 +1,26 @@
+import argparse
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import shutil
 import sys
 from unittest.mock import patch
+
+from optimum.intel.openvino import OVTrainer
+
 import transformers
 from transformers import TrainingArguments
 from transformers.trainer_callback import TrainerControl, TrainerState
-from optimum.intel.openvino import OVTrainer
-import json
 
 
 class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
-    def __init__(self, save_best_model_after_epoch: int = -1, metric_for_best_model="accuracy") -> None:
+    def __init__(self, save_best_model_after_epoch: int = -1, metric_for_best_model="accuracy", save_best_model_after_sparsity=0.8) -> None:
         super().__init__()
         self.best_metric = -1.0
         self.save_best_model_after_epoch = save_best_model_after_epoch
         self.metric_for_best_model = metric_for_best_model
+        self.save_best_model_after_sparsity = save_best_model_after_sparsity
 
     def register_trainer(self, trainer: transformers.Trainer):
         self.trainer = trainer
@@ -36,8 +40,8 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
         if last_eval_metric is None or self.best_metric >= last_eval_metric:
             print("Skip saving due to not best metric")
             return control
-        if last_sparisty is None or last_sparisty < 0.8:
-            print("Skip saving due to not 0.8 sparsity")
+        if last_sparisty is None or last_sparisty < self.save_best_model_after_sparsity:
+            print(f"Skip saving due to less than {self.save_best_model_after_sparsity} sparsity")
             return control
         if last_epoch is None or last_epoch <= float(self.save_best_model_after_epoch):
             print("Skip saving due to too early epoch")
@@ -57,17 +61,32 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
 
 
 @contextmanager
-def patch_save_best(save_best_model_after_epoch: int = -1, metric_for_best_model="accuracy"):
+def patch_save_best_model(metric_for_best_model="accuracy"):
+    original_argv = sys.argv
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--save_best_model_after_epoch", type=int, default=7)
+    parser.add_argument("--save_best_model_after_sparsity", type=float, default=0.8)
+    args, others = parser.parse_known_args()
+    sys.argv = [original_argv[0]] + others
+    save_best_model_after_epoch = args.save_best_model_after_epoch
+    save_best_model_after_sparsity = args.save_best_model_after_sparsity
+
     original_init = OVTrainer.__init__
 
     def new_init(self, *args, **kwargs):
-        save_best_callback = SaveBestModelCallback(save_best_model_after_epoch, metric_for_best_model)
+        save_best_callback = SaveBestModelCallback(
+            save_best_model_after_epoch,
+            metric_for_best_model,
+            save_best_model_after_sparsity
+        )
         callbacks = kwargs.pop("callbacks", None) or []
         callbacks.append(save_best_callback)
         original_init(self, *args, callbacks=callbacks, **kwargs)
         save_best_callback.register_trainer(self)
 
-    print("Patching save best model callback...")
-    with patch(".".join([original_init.__module__, original_init.__qualname__]), new_init):
+    print(f"Patching save best model callback after epoch {save_best_model_after_epoch} "
+          f"after sparsity {save_best_model_after_sparsity}...")
+    patch_name = 'optimum.intel.openvino.OVTrainer.__init__'
+    with patch(patch_name, new_init):
         yield
     print("Exit patching save best model callback...")

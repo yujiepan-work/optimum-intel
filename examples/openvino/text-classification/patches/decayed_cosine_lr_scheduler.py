@@ -1,20 +1,13 @@
+import argparse
 import bisect
 from contextlib import contextmanager
 import math
-import os
-from pathlib import Path
-import shutil
 import sys
 from unittest.mock import patch
-import argparse
 
 from optimum.intel.openvino import OVTrainer
 import torch
 from torch.optim.lr_scheduler import LambdaLR
-
-import transformers
-from transformers import TrainingArguments
-from transformers.trainer_callback import TrainerControl, TrainerState
 
 
 def get_cosine_with_decayed_hard_restarts_schedule_with_warmup(
@@ -78,6 +71,7 @@ def patch_decayed_cosine_lr_scheduler():
     sys.argv = [original_argv[0]] + others
 
     original_create_scheduler = OVTrainer.create_scheduler
+    patch_name = 'optimum.intel.openvino.OVTrainer.create_scheduler'
 
     def new_create_scheduler(self: OVTrainer, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
         if self.args.lr_scheduler_type == 'cosine_with_restarts':
@@ -86,7 +80,6 @@ def patch_decayed_cosine_lr_scheduler():
         return original_create_scheduler(self, num_training_steps, optimizer)
 
     print('Patching create_scheduler...')
-    with patch(".".join([original_create_scheduler.__module__, original_create_scheduler.__qualname__]),
-               new_create_scheduler):
+    with patch(patch_name, new_create_scheduler):
         yield
     print('Exit patching create_scheduler...')
