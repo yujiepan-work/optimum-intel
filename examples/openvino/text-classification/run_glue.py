@@ -52,6 +52,7 @@ from optimum.intel.openvino import OVConfig, OVTrainer, OVTrainingArguments
 from patches import patch_decayed_cosine_lr_scheduler
 from patches import patch_save_best_model
 from patches import patch_load_pretrained_pytorch_model
+from patches import patch_movement_init_threshold
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0")
@@ -212,6 +213,7 @@ class ModelArguments:
 @patch_decayed_cosine_lr_scheduler()
 @patch_save_best_model('accuracy')
 @patch_load_pretrained_pytorch_model()
+@patch_movement_init_threshold()
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.

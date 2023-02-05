@@ -28,8 +28,8 @@ def patch_load_pretrained_pytorch_model():
         def new_init(self: OVTrainer, *args, **kwargs):
             original_init(self, *args, **kwargs)
             state_dict = torch.load(model_path, map_location="cpu")
-            self.model.load_state_dict(state_dict, strict=True)
-            print(f'Loaded {model_path}.')
+            load_result = self.model.load_state_dict(state_dict, strict=False)
+            print(f'Loaded {model_path}: {load_result}')
             self.compression_controller.freeze()
 
         with patch(patch_name, new_init):
