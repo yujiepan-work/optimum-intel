@@ -30,7 +30,10 @@ def patch_load_pretrained_pytorch_model():
             state_dict = torch.load(model_path, map_location="cpu")
             load_result = self.model.load_state_dict(state_dict, strict=False)
             print(f'Loaded {model_path}: {load_result}')
-            self.compression_controller.freeze()
+            try:
+                self.compression_controller.freeze()
+            except Exception as e:
+                print(e)
 
         with patch(patch_name, new_init):
             yield
