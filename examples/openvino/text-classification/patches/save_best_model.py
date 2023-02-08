@@ -35,8 +35,8 @@ class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
                 last_eval_metric = log[f"eval_{self.metric_for_best_model}"]
             if "epoch" in log:
                 last_epoch = log["epoch"]
-            if "train/compression/magnitude_sparsity/sparsity_level_for_sparsified_layers" in log:
-                last_sparisty = log["train/compression/magnitude_sparsity/sparsity_level_for_sparsified_layers"]
+            if "compression/magnitude_sparsity/sparsity_level_for_sparsified_layers" in log:
+                last_sparisty = log["compression/magnitude_sparsity/sparsity_level_for_sparsified_layers"]
         if last_eval_metric is None or self.best_metric >= last_eval_metric:
             print("Skip saving due to not best metric")
             return control
