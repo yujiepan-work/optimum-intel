@@ -38,7 +38,6 @@ import evaluate
 import jstyleson as json
 from nncf.common.utils.os import safe_open
 from optimum.intel.openvino import OVConfig, OVTrainer, OVTrainingArguments
-from wav2vec2_onnx_config import Wav2Vec2OnnxConfig
 
 
 logger = logging.getLogger(__name__)
@@ -392,13 +391,12 @@ def main():
         model=model,
         teacher_model=teacher_model,
         ov_config=ov_config,
-        feature="audio-classification",
+        task="audio-classification",
         args=training_args,
         train_dataset=raw_datasets["train"] if training_args.do_train else None,
         eval_dataset=raw_datasets["eval"] if training_args.do_eval else None,
         compute_metrics=compute_metrics,
         tokenizer=feature_extractor,
-        onnx_config=Wav2Vec2OnnxConfig(model.config),
     )
 
     # Training

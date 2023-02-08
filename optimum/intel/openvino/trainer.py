@@ -130,7 +130,6 @@ class OVTrainer(Trainer):
         ov_config: Optional[OVConfig] = None,
         task: Optional[str] = None,
         feature: Optional[str] = None,
-        onnx_config: Optional[OnnxConfig] = None,
     ):
         super().__init__(
             model,
@@ -154,7 +153,6 @@ class OVTrainer(Trainer):
                     f"Both `feature` and `task` were specified. {task} will be used to define the model topology for the model ONNX export."
                 )
         self.task = task or feature
-        self.onnx_config = onnx_config
         self.teacher = None
         if teacher_model is not None:
             self.teacher = teacher_model.to(args.device)
@@ -191,6 +189,8 @@ class OVTrainer(Trainer):
 
             self.compression_controller, self.model = create_compressed_model(self.model, nncf_config)
             self.model_wrapped = self.model
+
+        self._set_signature_columns_if_needed()
 
     def _set_signature_columns_if_needed(self):
         if self._signature_columns is None:
@@ -690,11 +690,6 @@ class OVTrainer(Trainer):
                 model_type=model_type,
             )
             onnx_config = onnx_config_class(self.model.config)
-            if self.onnx_config is None:
-                onnx_config_cls = FeaturesManager._SUPPORTED_MODEL_TYPE[model_type][self.task]
-                onnx_config = onnx_config_cls(self.model.config)
-            else:
-                onnx_config = self.onnx_config
 
             if self._is_pruning_controller_exists():
                 # Note:
@@ -708,14 +703,13 @@ class OVTrainer(Trainer):
                 )
                 self._generate_openvino_ir(f)
             else:
-                use_external_data_format = (
-                    onnx_config.use_external_data_format(self.model.num_parameters()) or self.ov_config.save_onnx_model
-                )
-                f = io.BytesIO() if not use_external_data_format else os.path.join(output_dir, "model.onnx")
+                num_parameters = self.model.num_parameters()
+                save_as_external_data = use_external_data_format(num_parameters) or self.ov_config.save_onnx_model
+                f = io.BytesIO() if not save_as_external_data else os.path.join(output_dir, ONNX_WEIGHTS_NAME)
                 self._onnx_export(self.model, onnx_config, self.ov_config, f)
 
                 # Load and save the compressed model
-                model = core.read_model(f) if use_external_data_format else core.read_model(f.getvalue(), b"")
+                model = core.read_model(f) if save_as_external_data else core.read_model(f.getvalue(), b"")
                 compress_quantize_weights_transformation(model)
                 openvino.runtime.serialize(model, output_path, output_path.replace(".xml", ".bin"))
 
