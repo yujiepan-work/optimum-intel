@@ -191,6 +191,8 @@ class OVTrainer(Trainer):
             self.model_wrapped = self.model
 
         self._set_signature_columns_if_needed()
+        # TODO(yujie): change design of compression_metrics
+        self.compression_metrics = dict()
 
     def _set_signature_columns_if_needed(self):
         if self._signature_columns is None:
@@ -428,8 +430,6 @@ class OVTrainer(Trainer):
                 if step % args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(args, self.state, self.control)
                     # if self.teacher is not None or self.compression_controller is not None:
-                    # TODO(yujie): change design of compression_metrics 
-                    self.compression_metrics = defaultdict(float)
                     if self.compression_controller is not None:
                         # Must be called at the beginning of each training step to prepare the compression method
                         self.compression_controller.scheduler.step()
