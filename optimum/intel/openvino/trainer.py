@@ -427,8 +427,9 @@ class OVTrainer(Trainer):
 
                 if step % args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(args, self.state, self.control)
-                    if self.teacher is not None or self.compression_controller is not None:
-                        self.compression_metrics = defaultdict(float)
+                    # if self.teacher is not None or self.compression_controller is not None:
+                    # TODO(yujie): change design of compression_metrics 
+                    self.compression_metrics = defaultdict(float)
                     if self.compression_controller is not None:
                         # Must be called at the beginning of each training step to prepare the compression method
                         self.compression_controller.scheduler.step()
@@ -609,10 +610,10 @@ class OVTrainer(Trainer):
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             logs["learning_rate"] = self._get_learning_rate()
 
-            if self.compression_controller is not None:
-                for key, value in self.compression_metrics.items():
-                    logs[key] = value
+            for key, value in self.compression_metrics.items():
+                logs[key] = value
 
+            if self.compression_controller is not None:
                 compression_stats = self.compression_controller.statistics()
                 for key, value in prepare_for_tensorboard(compression_stats).items():
                     logs["compression/{0}".format(key)] = value
