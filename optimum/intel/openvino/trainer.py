@@ -403,11 +403,6 @@ class OVTrainer(Trainer):
                 else args.max_steps * args.gradient_accumulation_steps
             )
             self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
-            if self.compression_controller is not None:
-                self.compression_controller.scheduler.epoch_step()
-                nncf_logger.info(
-                    "\nEpoch {} |".format(epoch).join(self.compression_controller.statistics().to_str().split("\n"))
-                )
 
             if self.compression_controller is not None:
                 # Must be called at the beginning of each training epoch to prepare the compression method
