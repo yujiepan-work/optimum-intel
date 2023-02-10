@@ -12,34 +12,26 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import copy
 import tempfile
 import unittest
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+from math import ceil
 
 import numpy as np
 import torch
 from datasets import load_dataset
-from transformers import (
-    AutoModelForQuestionAnswering,
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    TrainingArguments,
-    default_data_collator,
-)
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers.trainer_utils import TrainOutput
 from transformers.utils import WEIGHTS_NAME
 
 import evaluate
-from nncf.torch.dynamic_graph.graph_tracer import create_mock_tensor
 from optimum.intel.openvino import OVTrainingArguments
 from optimum.intel.openvino.configuration import DEFAULT_QUANTIZATION_CONFIG, OVConfig
-from optimum.intel.openvino.modeling import OVModelForQuestionAnswering, OVModelForSequenceClassification
-from optimum.intel.openvino.quantization import OVQuantizer
+from optimum.intel.openvino.modeling import OVModelForSequenceClassification
 from optimum.intel.openvino.trainer import OVTrainer
-from parameterized import param, parameterized
+from parameterized import parameterized_class
 
 
 CUSTOMIZED_QUANTIZATION_CONFIG = {
@@ -52,7 +44,7 @@ CUSTOMIZED_QUANTIZATION_CONFIG = {
         },
         "batchnorm_adaptation": {"num_bn_adaptation_samples": 4},
     },
-    "scope_overrides": {"activations": {"{re}.*matmul_0": {"mode": "symmetric"}}},
+    "scope_overrides": {"activations": {"{re}.*matmul_0": {"mode": "asymmetric"}}},
     "ignored_scopes": [],
 }
 
@@ -73,215 +65,184 @@ MOVEMENT_SPARSITY_CONFIG_FOR_BERT = {
 }
 
 
-def generate_mock_tokens(input_infos):
-    mock_tokens = dict()
-    for info in input_infos:
-        single_batch_info = copy.copy(info)
-        input_shape = tuple([1] + list(info.shape)[1:])
-        single_batch_info.shape = input_shape
-        mock_tokens[info.keyword] = create_mock_tensor(single_batch_info, "cpu")
-    return mock_tokens
-
-
 @dataclass
-class OVTrainerTestDescription:
+class OVTrainerTestDescriptor:
     model_id: str
     teacher_model_id: Optional[str] = None
-    nncf_compression_config: Union[List[Dict], Dict] = field(default_factory=list)
-    num_fake_quantize: int = 0
-    num_int8: int = 0
-    num_binary_masks: int = 0
+    nncf_compression_config: Union[List[Dict], Dict, None] = None
+    expected_fake_quantize: int = 0
+    expected_int8: int = 0
+    expected_binary_masks: int = 0
     compression_metrics: List[str] = field(default_factory=list)
 
 
-class OVTrainerTest(unittest.TestCase):
-    TRAIN_DESCRIPTIONS = [
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=[],
-            compression_metrics=["distillation_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=DEFAULT_QUANTIZATION_CONFIG,
-            expected_fake_quantize=19,
-            expected_int8=14,
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=DEFAULT_QUANTIZATION_CONFIG,
-            expected_fake_quantize=19,
-            expected_int8=14,
-            compression_metrics=["distillation_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=CUSTOMIZED_QUANTIZATION_CONFIG,
-            expected_fake_quantize=31,
-            expected_int8=17,
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=CUSTOMIZED_QUANTIZATION_CONFIG,
-            expected_fake_quantize=31,
-            expected_int8=17,
-            compression_metrics=["distillation_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=MOVEMENT_SPARSITY_CONFIG_FOR_BERT,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=MOVEMENT_SPARSITY_CONFIG_FOR_BERT,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss", "distillation_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=[DEFAULT_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
-            expected_fake_quantize=19,
-            expected_int8=14,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=[CUSTOMIZED_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
-            expected_fake_quantize=31,
-            expected_int8=17,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=[DEFAULT_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
-            expected_fake_quantize=19,
-            expected_int8=14,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss", "distillation_loss"],
-        ),
-        param(
-            model_id="hf-internal-testing/tiny-bert",
-            teacher_model_id="hf-internal-testing/tiny-bert",
-            nncf_compression_config=[CUSTOMIZED_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
-            expected_fake_quantize=31,
-            expected_int8=17,
-            expected_binary_masks=24,
-            compression_metrics=["compression_loss", "distillation_loss"],
-        ),
-    ]
-
-    @parameterized.expand(TRAIN_DESCRIPTIONS)
-    def test_training(
-        self,
-        model_id,
-        teacher_model_id=None,
+OVTRAINER_TEST_DESCRIPTORS = [
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
         nncf_compression_config=[],
-        expected_fake_quantize=0,
-        expected_int8=0,
-        expected_binary_masks=0,
-        compression_metrics=[],
-    ):
-        ov_config = OVConfig()
-        ov_config.compression = nncf_compression_config
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForSequenceClassification.from_pretrained(model_id)
-        teacher_model = None
-        if teacher_model_id:
-            teacher_model = AutoModelForSequenceClassification.from_pretrained(teacher_model_id)
+        compression_metrics=["distillation_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=DEFAULT_QUANTIZATION_CONFIG,
+        expected_fake_quantize=19,
+        expected_int8=14,
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=DEFAULT_QUANTIZATION_CONFIG,
+        expected_fake_quantize=19,
+        expected_int8=14,
+        compression_metrics=["distillation_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=CUSTOMIZED_QUANTIZATION_CONFIG,
+        expected_fake_quantize=31,
+        expected_int8=17,
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=CUSTOMIZED_QUANTIZATION_CONFIG,
+        expected_fake_quantize=31,
+        expected_int8=17,
+        compression_metrics=["distillation_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=MOVEMENT_SPARSITY_CONFIG_FOR_BERT,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=MOVEMENT_SPARSITY_CONFIG_FOR_BERT,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss", "distillation_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=[DEFAULT_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
+        expected_fake_quantize=19,
+        expected_int8=14,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=[CUSTOMIZED_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
+        expected_fake_quantize=31,
+        expected_int8=17,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=[DEFAULT_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
+        expected_fake_quantize=19,
+        expected_int8=14,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss", "distillation_loss"],
+    ),
+    OVTrainerTestDescriptor(
+        model_id="hf-internal-testing/tiny-bert",
+        teacher_model_id="hf-internal-testing/tiny-bert",
+        nncf_compression_config=[CUSTOMIZED_QUANTIZATION_CONFIG, MOVEMENT_SPARSITY_CONFIG_FOR_BERT],
+        expected_fake_quantize=31,
+        expected_int8=17,
+        expected_binary_masks=24,
+        compression_metrics=["compression_loss", "distillation_loss"],
+    ),
+]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trainer = self.build_sst2_trainer(
-                output_dir=tmp_dir,
-                ov_config=ov_config,
-                tokenizer=tokenizer,
-                model=model,
-                teacher_model=teacher_model,
+
+@parameterized_class("descriptor", zip(OVTRAINER_TEST_DESCRIPTORS))
+class OVTrainerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.descriptor: OVTrainerTestDescriptor
+        desc = self.descriptor
+        self.ov_config = OVConfig()
+        self.ov_config.compression = desc.nncf_compression_config
+        self.tokenizer = AutoTokenizer.from_pretrained(desc.model_id)
+        self.task = "sequence-classification"
+        self.model = AutoModelForSequenceClassification.from_pretrained(desc.model_id)
+        self.teacher_model = None
+        if desc.teacher_model_id:
+            self.teacher_model = AutoModelForSequenceClassification.from_pretrained(desc.teacher_model_id)
+
+        def tokenizer_fn(examples):
+            return self.tokenizer(examples["sentence"], padding="max_length", max_length=128)
+
+        self.dataset = load_dataset("glue", "sst2")
+        self.train_dataset = self.dataset["train"].select(range(8)).map(tokenizer_fn, batched=True)
+        self.eval_dataset = self.dataset["validation"].select(range(4)).map(tokenizer_fn, batched=True)
+        self.metric = evaluate.load("glue", "sst2")
+
+    def test_training(self):
+        desc: OVTrainerTestDescriptor = self.descriptor
+        num_train_epochs = 3
+        train_batch_size = 4
+        total_steps = ceil(len(self.train_dataset) / train_batch_size) * num_train_epochs
+        with tempfile.TemporaryDirectory() as output_dir:
+            args = OVTrainingArguments(
+                output_dir=output_dir,
+                num_train_epochs=num_train_epochs,
+                do_train=True,
+                do_eval=True,
+                logging_steps=1,
+                per_device_train_batch_size=train_batch_size,
+                per_device_eval_batch_size=1,
+                no_cuda=True,
             )
-            trainer.train()
+            trainer = OVTrainer(
+                model=self.model,
+                teacher_model=self.teacher_model,
+                args=args,
+                ov_config=self.ov_config,
+                task=self.task,
+                train_dataset=self.train_dataset,
+                eval_dataset=self.eval_dataset,
+                tokenizer=self.tokenizer,
+                compute_metrics=self.compute_metric,
+            )
+
+            # check evaluation can work even before training.
+            metrics = trainer.evaluate()
+            self.assertIn("eval_loss", metrics)
+            self.assertIn("eval_accuracy", metrics)
+
+            # check trainining & saving
+            train_outputs = trainer.train()
+            self.assertIsInstance(train_outputs, TrainOutput)
+            self.assertEqual(train_outputs.global_step, total_steps)
             trainer.save_model()
 
-            for metric in compression_metrics:
+            for metric in trainer.compression_metrics:
                 self.assertIn(metric, trainer.compression_metrics)
 
-            ovmodel = OVModelForSequenceClassification.from_pretrained(tmp_dir)
+            # check saved OVModel can output
+            ovmodel = OVModelForSequenceClassification.from_pretrained(output_dir)
+            inputs = next(iter(trainer.get_eval_dataloader()))
+            outputs = ovmodel(**inputs)
+            self.assertIn("logits", outputs)
+
+            # check quantization ops
             num_fake_quantize, num_int8 = self.count_quantization_op_number(ovmodel)
-            self.assertEqual(expected_fake_quantize, num_fake_quantize)
-            self.assertEqual(expected_int8, num_int8)
+            self.assertEqual(desc.expected_fake_quantize, num_fake_quantize)
+            self.assertEqual(desc.expected_int8, num_int8)
 
-            state_dict = torch.load(Path(tmp_dir, WEIGHTS_NAME), map_location="cpu")
+            # check binary mask in sparsity/pruning algorithms
+            state_dict = torch.load(Path(output_dir, WEIGHTS_NAME), map_location="cpu")
             num_binary_masks = sum(key.endswith("_binary_mask") for key in state_dict)
-            self.assertEqual(expected_binary_masks, num_binary_masks)
+            self.assertEqual(desc.expected_binary_masks, num_binary_masks)
 
-            tokens = generate_mock_tokens(trainer.model.input_infos)
-            outputs = ovmodel(**tokens)
-            self.assertTrue("logits" in outputs)
-
-            model2 = AutoModelForSequenceClassification.from_pretrained(model_id)
-            trainer_resume = self.build_sst2_trainer(
-                tmp_dir,
-                ov_config=ov_config,
-                tokenizer=tokenizer,
-                model=model2,
-                teacher_model=teacher_model,
-                do_train=False,
-            )
-            trainer_resume.evaluate()
-
-    def build_sst2_trainer(
-        self,
-        output_dir,
-        ov_config,
-        tokenizer,
-        model,
-        teacher_model=None,
-        num_train_epochs=3,
-        do_train=True,
-        do_eval=True,
-        **training_args
-    ):
-        def tokenizer_fn(examples):
-            return tokenizer(examples["sentence"], padding="max_length", max_length=128)
-
-        dataset = load_dataset("glue", "sst2")
-        dataset = dataset.map(tokenizer_fn, batched=True)
-        train_dataset = dataset["train"].select(range(16))
-        eval_dataset = dataset["validation"].select(range(16))
-        metric = evaluate.load("glue", "sst2")
-
-        def compute_metrics(p):
-            return metric.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)
-
-        args = dict(
-            output_dir=output_dir,
-            num_train_epochs=num_train_epochs,
-            do_train=do_train,
-            do_eval=do_eval,
-            logging_steps=1,
-        )
-        args.update(training_args)
-        ov_config.log_dir = output_dir
-
-        trainer = OVTrainer(
-            model=model,
-            teacher_model=teacher_model,
-            args=OVTrainingArguments(**args),
-            ov_config=ov_config,
-            task="sequence-classification",
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
-            compute_metrics=compute_metrics,
-            tokenizer=tokenizer,
-        )
-        return trainer
+    def compute_metric(self, p):
+        return self.metric.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)
 
     def count_quantization_op_number(self, ovmodel):
         num_fake_quantize = 0
@@ -292,6 +253,3 @@ class OVTrainerTest(unittest.TestCase):
             if "8" in elem.get_element_type().get_type_name():
                 num_int8 += 1
         return num_fake_quantize, num_int8
-
-    def check_mask(self, ovmodel):
-        return True

@@ -190,7 +190,6 @@ class OVTrainer(Trainer):
             self.compression_controller, self.model = create_compressed_model(self.model, nncf_config)
             self.model_wrapped = self.model
 
-        self._set_signature_columns_if_needed()
         # TODO(yujie): change design of compression_metrics
         self.compression_metrics = dict()
 
@@ -792,6 +791,7 @@ class OVTrainer(Trainer):
         model_inputs = config.generate_dummy_inputs(framework="pt")
         device = model.device
         model_inputs = dict((k, v.to(device)) for k, v in model_inputs.items())
+        self._set_signature_columns_if_needed()  # find model input names needed in ONNX export
         # Create ordered inputs for the ONNX export of NNCFNetwork as keyword arguments are currently not supported
         inputs = tuple([model_inputs.pop(key, None) for key in self._signature_columns if len(model_inputs) != 0])
 
