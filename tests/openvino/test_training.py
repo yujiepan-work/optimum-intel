@@ -179,7 +179,7 @@ class OVTrainerTest(unittest.TestCase):
         ),
     ]
 
-    @parameterized.expand(TRAIN_DESCRIPTIONS[:1])
+    @parameterized.expand(TRAIN_DESCRIPTIONS)
     def test_training(
         self,
         model_id,
@@ -225,13 +225,14 @@ class OVTrainerTest(unittest.TestCase):
             outputs = ovmodel(**tokens)
             self.assertTrue("logits" in outputs)
 
-            model_resume = AutoModelForSequenceClassification.from_pretrained(tmp_dir)
+            model2 = AutoModelForSequenceClassification.from_pretrained(model_id)
             trainer_resume = self.build_sst2_trainer(
                 tmp_dir,
                 ov_config=ov_config,
                 tokenizer=tokenizer,
-                model=model_resume,
+                model=model2,
                 teacher_model=teacher_model,
+                do_train=False,
             )
             trainer_resume.evaluate()
 
