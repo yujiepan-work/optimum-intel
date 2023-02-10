@@ -15,9 +15,9 @@
 import tempfile
 import unittest
 from dataclasses import dataclass, field
+from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from math import ceil
 
 import numpy as np
 import torch
