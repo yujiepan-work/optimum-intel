@@ -49,7 +49,14 @@ from transformers.trainer_utils import (
     has_length,
     speed_metrics,
 )
-from transformers.utils import WEIGHTS_NAME, TensorType, is_apex_available, is_sagemaker_mp_enabled, logging
+from transformers.utils import (
+    WEIGHTS_NAME,
+    TensorType,
+    is_apex_available,
+    is_sagemaker_mp_enabled,
+    is_torch_tpu_available,
+    logging,
+)
 
 import openvino
 from nncf import NNCFConfig
