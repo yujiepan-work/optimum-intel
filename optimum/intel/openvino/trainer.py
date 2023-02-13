@@ -36,7 +36,6 @@ from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
 from transformers.deepspeed import deepspeed_init
 from transformers.integrations import hp_params
 from transformers.modeling_utils import PreTrainedModel, unwrap_model
-from transformers.onnx import OnnxConfig
 from transformers.pytorch_utils import is_torch_less_than_1_11
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer import TRAINER_STATE_NAME, TRAINING_ARGS_NAME
@@ -50,16 +49,9 @@ from transformers.trainer_utils import (
     has_length,
     speed_metrics,
 )
-from transformers.utils import (
-    WEIGHTS_NAME,
-    is_apex_available,
-    is_sagemaker_mp_enabled,
-    is_torch_tpu_available,
-    logging,
-)
+from transformers.utils import WEIGHTS_NAME, TensorType, is_apex_available, is_sagemaker_mp_enabled, logging
 
 import openvino
-from huggingface_hub import HfApi
 from nncf import NNCFConfig
 from nncf.common.logging.logger import nncf_logger, set_log_level
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
@@ -753,19 +745,11 @@ class OVTrainer(Trainer):
 
     def _set_task(self):
         if self.task is None:
-            self.task = HfApi().model_info(self.model.config._name_or_path).pipeline_tag
-            if self.task in ["sentiment-analysis", "text-classification", "zero-shot-classification"]:
-                self.task = "sequence-classification"
-            elif self.task in ["feature-extraction", "fill-mask"]:
-                self.task = "default"
-            elif self.task == "text-generation":
-                self.task = "causal-lm"
-            elif self.task is None:
-                raise ValueError(
-                    "The task defining the model topology could not be extracted and needs to be specified for the ONNX export."
-                )
-        if self.task in ["seq2seq-lm", "translation", "summarization"]:
-            raise ValueError(f"Seq2Seq models are currently not supported for post-training static quantization.")
+            raise ValueError("The model task defining the model topology needs to be specified for the ONNX export.")
+        elif self.task in ["sentiment-analysis", "text-classification", "zero-shot-classification"]:
+            self.task = "sequence-classification"
+        elif self.task in ["feature-extraction", "fill-mask"]:
+            self.task = "default"
 
     def _onnx_export(self, model: NNCFNetwork, config: OnnxConfig, ov_config: OVConfig, f: Union[str, io.BytesIO]):
         opset = min(config.DEFAULT_ONNX_OPSET, MAX_ONNX_OPSET)
