@@ -19,6 +19,7 @@ import os
 import sys
 import time
 import warnings
+from collections import defaultdict
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -93,6 +94,9 @@ if is_apex_available():
 
 if is_sagemaker_mp_enabled():
     import smdistributed.modelparallel.torch as smp
+
+if is_torch_tpu_available(check_device=False):
+    import torch_xla.core.xla_model as xm
 
 core = Core()
 
@@ -185,9 +189,6 @@ class OVTrainer(Trainer):
 
             self.compression_controller, self.model = create_compressed_model(self.model, nncf_config)
             self.model_wrapped = self.model
-
-        # TODO(yujie): change design of compression_metrics
-        self.compression_metrics = dict()
 
     def _set_signature_columns_if_needed(self):
         if self._signature_columns is None:
@@ -361,6 +362,7 @@ class OVTrainer(Trainer):
         self.state.is_world_process_zero = self.is_world_process_zero()
 
         tr_loss = torch.tensor(0.0).to(args.device)
+        self.compression_metrics = defaultdict(lambda: torch.tensor(0.0).to(args.device))
         # _total_loss_scalar is updated everytime .item() has to be called on tr_loss and stores the sum of all losses
         self._total_loss_scalar = 0.0
         self._globalstep_last_logged = self.state.global_step
@@ -424,7 +426,6 @@ class OVTrainer(Trainer):
 
                 if step % args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(args, self.state, self.control)
-                    # if self.teacher is not None or self.compression_controller is not None:
                     if self.compression_controller is not None:
                         # Must be called at the beginning of each training step to prepare the compression method
                         self.compression_controller.scheduler.step()
@@ -579,13 +580,15 @@ class OVTrainer(Trainer):
             distillation_loss = self.compute_distillation_loss(inputs, outputs)
             loss = ((1 - self.distillation_weight) * task_loss) + (self.distillation_weight * distillation_loss)
 
-            self.compression_metrics["task_loss"] = task_loss.item()
-            self.compression_metrics["distillation_loss"] = distillation_loss.item()
+            if model.training:
+                self.compression_metrics["task_loss"] = task_loss.item()
+                self.compression_metrics["distillation_loss"] = distillation_loss.item()
 
         if self.compression_controller is not None:
             compression_loss = self.compression_controller.loss()
             loss += compression_loss
-            self.compression_metrics["compression_loss"] = compression_loss.item()
+            if model.training:
+                self.compression_metrics["compression_loss"] = compression_loss.item()
 
         return (loss, outputs) if return_outputs else loss
 
@@ -605,8 +608,9 @@ class OVTrainer(Trainer):
             logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
             logs["learning_rate"] = self._get_learning_rate()
 
-            for key, value in self.compression_metrics.items():
-                logs[key] = value
+            if model.training:
+                for key, value in self.compression_metrics.items():
+                    logs[key] = value
 
             if self.compression_controller is not None:
                 compression_stats = self.compression_controller.statistics()
