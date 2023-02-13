@@ -156,8 +156,6 @@ class OVTrainer(Trainer):
         if teacher_model is not None:
             self.teacher = teacher_model.to(args.device)
             self.teacher.eval()
-            self.distillation_weight = args.distillation_weight
-            self.temperature = args.distillation_temperature
         self.compression_controller = None
 
         if self.ov_config is not None and self.args.do_train:
@@ -558,11 +556,12 @@ class OVTrainer(Trainer):
             teacher_outputs = self.teacher(**inputs)
         teacher_logits = teacher_outputs.logits
         student_logits = student_outputs.logits
+        temperature = self.args.distillation_temperature
         return F.kl_div(
-            input=F.log_softmax(student_logits / self.temperature, dim=-1),
-            target=F.softmax(teacher_logits / self.temperature, dim=-1),
+            input=F.log_softmax(student_logits / temperature, dim=-1),
+            target=F.softmax(teacher_logits / temperature, dim=-1),
             reduction="batchmean",
-        ) * (self.temperature**2)
+        ) * (temperature**2)
 
     def compute_loss(self, model, inputs, return_outputs=False):
         if self.teacher is None:
@@ -577,7 +576,7 @@ class OVTrainer(Trainer):
             if self.args.n_gpu > 1:
                 task_loss = task_loss.mean()
             distillation_loss = self.compute_distillation_loss(inputs, outputs)
-            loss = ((1 - self.distillation_weight) * task_loss) + (self.distillation_weight * distillation_loss)
+            loss = (1 - self.args.distillation_weight) * task_loss + self.args.distillation_weight * distillation_loss
 
             if model.training:
                 self.compression_metrics["task_loss"] = task_loss.item()

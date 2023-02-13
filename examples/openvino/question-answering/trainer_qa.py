@@ -103,16 +103,17 @@ class QuestionAnsweringOVTrainer(OVTrainer):
         with torch.no_grad():
             teacher_outputs = self.teacher(**inputs)
 
+        temperature = self.args.distillation_temperature
         distilliation_loss_start = F.kl_div(
-            input=F.log_softmax(student_outputs.start_logits / self.temperature, dim=-1),
-            target=F.softmax(teacher_outputs.start_logits / self.temperature, dim=-1),
+            input=F.log_softmax(student_outputs.start_logits / temperature, dim=-1),
+            target=F.softmax(teacher_outputs.start_logits / temperature, dim=-1),
             reduction="batchmean",
-        ) * (self.temperature**2)
+        ) * (temperature**2)
         distilliation_loss_end = F.kl_div(
-            input=F.log_softmax(student_outputs.end_logits / self.temperature, dim=-1),
-            target=F.softmax(teacher_outputs.end_logits / self.temperature, dim=-1),
+            input=F.log_softmax(student_outputs.end_logits / temperature, dim=-1),
+            target=F.softmax(teacher_outputs.end_logits / temperature, dim=-1),
             reduction="batchmean",
-        ) * (self.temperature**2)
+        ) * (temperature**2)
         return (distilliation_loss_start + distilliation_loss_end) / 2.0
 
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -133,7 +134,7 @@ class QuestionAnsweringOVTrainer(OVTrainer):
             task_loss = (task_loss_start + task_loss_end) / 2.0
 
             distillation_loss = self.compute_distillation_loss(inputs, outputs)
-            loss = ((1 - self.distillation_weight) * task_loss) + (self.distillation_weight * distillation_loss)
+            loss = (1 - self.args.distillation_weight) * task_loss + self.args.distillation_weight * distillation_loss
             if model.training:
                 self.compression_metrics["task_loss"] = task_loss.item()
                 self.compression_metrics["distillation_loss"] = distillation_loss.item()
