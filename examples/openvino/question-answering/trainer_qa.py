@@ -134,12 +134,14 @@ class QuestionAnsweringOVTrainer(OVTrainer):
 
             distillation_loss = self.compute_distillation_loss(inputs, outputs)
             loss = ((1 - self.distillation_weight) * task_loss) + (self.distillation_weight * distillation_loss)
-            self.compression_metrics["task_loss"] = task_loss.item()
-            self.compression_metrics["distillation_loss"] = distillation_loss.item()
+            if model.training:
+                self.compression_metrics["task_loss"] = task_loss.item()
+                self.compression_metrics["distillation_loss"] = distillation_loss.item()
 
         if self.compression_controller is not None:
             compression_loss = self.compression_controller.loss()
             loss += compression_loss
-            self.compression_metrics["compression_loss"] = compression_loss.item()
+            if model.training:
+                self.compression_metrics["compression_loss"] = compression_loss.item()
 
         return (loss, outputs) if return_outputs else loss
