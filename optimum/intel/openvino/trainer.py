@@ -19,11 +19,13 @@ import os
 import sys
 import time
 import warnings
+from collections import defaultdict
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.onnx import export as onnx_export
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -47,23 +49,35 @@ from transformers.trainer_utils import (
     has_length,
     speed_metrics,
 )
-from transformers.training_args import TrainingArguments
-from transformers.utils import WEIGHTS_NAME, TensorType, is_apex_available, is_sagemaker_mp_enabled, logging
+from transformers.utils import (
+    WEIGHTS_NAME,
+    TensorType,
+    is_apex_available,
+    is_sagemaker_mp_enabled,
+    is_torch_tpu_available,
+    logging,
+)
 
 import openvino
 from nncf import NNCFConfig
-from nncf.common.utils.logger import set_log_level
+from nncf.common.logging.logger import nncf_logger, set_log_level
+from nncf.common.utils.tensorboard import prepare_for_tensorboard
 from nncf.config.structures import BNAdaptationInitArgs, QuantizationRangeInitArgs
+from nncf.experimental.torch.sparsity.movement.algo import MovementSparsityController
+from nncf.experimental.torch.sparsity.movement.scheduler import MovementSchedulerStage
 from nncf.torch import create_compressed_model
+from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmController
 from nncf.torch.nncf_network import NNCFNetwork
 from openvino._offline_transformations import compress_quantize_weights_transformation
 from openvino.runtime import Core
+from openvino.tools.mo import convert_model
 from optimum.exporters import TasksManager
 from optimum.exporters.onnx import OnnxConfig
 from optimum.utils import logging
 
 from .configuration import OVConfig
 from .quantization import OVDataLoader
+from .training_args import OVTrainingArguments
 from .utils import (
     MAX_ONNX_OPSET,
     MAX_ONNX_OPSET_2022_2_0,
@@ -80,10 +94,17 @@ if is_apex_available():
 if is_sagemaker_mp_enabled():
     import smdistributed.modelparallel.torch as smp
 
+if is_torch_tpu_available(check_device=False):
+    import torch_xla.core.xla_model as xm
+
 core = Core()
 
-set_log_level(logging.ERROR)
 logger = logging.get_logger(__name__)
+logger.setLevel(logging.INFO)
+
+# NNCF Error to be shown on stdout
+# set_log_level(logging.ERROR)
+NNCF_LOG_FILE_NAME = "nncf_output.log"
 
 
 class OVTrainer(Trainer):
@@ -94,7 +115,8 @@ class OVTrainer(Trainer):
     def __init__(
         self,
         model: Union[PreTrainedModel, torch.nn.Module] = None,
-        args: TrainingArguments = None,
+        teacher_model: Union[PreTrainedModel, torch.nn.Module] = None,
+        args: OVTrainingArguments = None,
         data_collator: Optional[DataCollator] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Dataset] = None,
@@ -130,6 +152,10 @@ class OVTrainer(Trainer):
                     f"Both `feature` and `task` were specified. {task} will be used to define the model topology for the model ONNX export."
                 )
         self.task = task or feature
+        self.teacher = None
+        if teacher_model is not None:
+            self.teacher = teacher_model.to(args.device)
+            self.teacher.eval()
         self.compression_controller = None
 
         if self.ov_config is not None and self.args.do_train:
@@ -146,6 +172,18 @@ class OVTrainer(Trainer):
                     BNAdaptationInitArgs(OVDataLoader(train_dataloader)),
                 ]
             )
+
+            # Configure NNCF logging
+            # Disable nncf logging to stdout except error
+            # but to file nncf_output.log
+            nncf_config["log_dir"] = args.output_dir
+            nncf_log_file_handler = logging.logging.FileHandler(os.path.join(args.output_dir, NNCF_LOG_FILE_NAME))
+            nncf_log_file_handler.setFormatter(logging.logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+            nncf_logger.addHandler(nncf_log_file_handler)
+            set_log_level(logging.ERROR)
+            nncf_logger.setLevel(logging.INFO)
+            nncf_log_file_handler.setLevel(logging.INFO)
+
             self.compression_controller, self.model = create_compressed_model(self.model, nncf_config)
             self.model_wrapped = self.model
 
@@ -240,6 +278,9 @@ class OVTrainer(Trainer):
         if args.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
 
+        if self.args.local_rank != -1:
+            if self.compression_controller is not None:
+                self.compression_controller.distributed()
         model = self._wrap_model(self.model_wrapped)
 
         if is_sagemaker_mp_enabled() and resume_from_checkpoint is not None:
@@ -318,6 +359,7 @@ class OVTrainer(Trainer):
         self.state.is_world_process_zero = self.is_world_process_zero()
 
         tr_loss = torch.tensor(0.0).to(args.device)
+        self.compression_metrics = defaultdict(lambda: torch.tensor(0.0).to(args.device))
         # _total_loss_scalar is updated everytime .item() has to be called on tr_loss and stores the sum of all losses
         self._total_loss_scalar = 0.0
         self._globalstep_last_logged = self.state.global_step
@@ -509,6 +551,93 @@ class OVTrainer(Trainer):
 
         return TrainOutput(self.state.global_step, train_loss, metrics)
 
+    def compute_distillation_loss(self, inputs, student_outputs):
+        with torch.no_grad():
+            teacher_outputs = self.teacher(**inputs)
+        teacher_logits = teacher_outputs.logits
+        student_logits = student_outputs.logits
+        temperature = self.args.distillation_temperature
+        return F.kl_div(
+            input=F.log_softmax(student_logits / temperature, dim=-1),
+            target=F.softmax(teacher_logits / temperature, dim=-1),
+            reduction="batchmean",
+        ) * (temperature**2)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        if self.teacher is None:
+            retval = super().compute_loss(model, inputs, return_outputs)
+
+            if return_outputs is True:
+                loss, outputs = retval
+            else:
+                loss = retval
+        else:
+            task_loss, outputs = super().compute_loss(model, inputs, return_outputs=True)
+            if self.args.n_gpu > 1:
+                task_loss = task_loss.mean()
+            distillation_loss = self.compute_distillation_loss(inputs, outputs)
+            loss = (1 - self.args.distillation_weight) * task_loss + self.args.distillation_weight * distillation_loss
+
+            if model.training:
+                self.compression_metrics["task_loss"] = task_loss.item()
+                self.compression_metrics["distillation_loss"] = distillation_loss.item()
+
+        if self.compression_controller is not None:
+            compression_loss = self.compression_controller.loss()
+            loss += compression_loss
+            if model.training:
+                self.compression_metrics["compression_loss"] = compression_loss.item()
+
+        return (loss, outputs) if return_outputs else loss
+
+    def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
+        if self.control.should_log:
+            if is_torch_tpu_available():
+                xm.mark_step()
+
+            logs: Dict[str, float] = {}
+
+            # all_gather + mean() to get average loss over all processes
+            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+
+            # reset tr_loss to zero
+            tr_loss -= tr_loss
+
+            logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
+            logs["learning_rate"] = self._get_learning_rate()
+
+            if model.training:
+                for key, value in self.compression_metrics.items():
+                    logs[key] = value
+
+            if self.compression_controller is not None:
+                compression_stats = self.compression_controller.statistics()
+                for key, value in prepare_for_tensorboard(compression_stats).items():
+                    logs["compression/{0}".format(key)] = value
+
+            self._total_loss_scalar += tr_loss_scalar
+            self._globalstep_last_logged = self.state.global_step
+            self.store_flos()
+
+            self.log(logs)
+
+        metrics = None
+        if self.control.should_evaluate:
+            if isinstance(self.eval_dataset, dict):
+                for eval_dataset_name, eval_dataset in self.eval_dataset.items():
+                    metrics = self.evaluate(
+                        eval_dataset=eval_dataset,
+                        ignore_keys=ignore_keys_for_eval,
+                        metric_key_prefix=f"eval_{eval_dataset_name}",
+                    )
+            else:
+                metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+            self._report_to_hp_search(trial, self.state.global_step, metrics)
+
+        if self.control.should_save:
+            self._save_checkpoint(model, trial, metrics=metrics)
+            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         # If we are executing this function, we are the process zero, so we don't check for that.
         output_dir = output_dir if output_dir is not None else self.args.output_dir
@@ -554,15 +683,57 @@ class OVTrainer(Trainer):
                 model_type=model_type,
             )
             onnx_config = onnx_config_class(self.model.config)
-            num_parameters = self.model.num_parameters()
-            save_as_external_data = use_external_data_format(num_parameters) or self.ov_config.save_onnx_model
-            f = io.BytesIO() if not save_as_external_data else os.path.join(output_dir, ONNX_WEIGHTS_NAME)
-            self._onnx_export(self.model, onnx_config, self.ov_config, f)
 
-            # Load and save the compressed model
-            model = core.read_model(f) if save_as_external_data else core.read_model(f.getvalue(), b"")
-            compress_quantize_weights_transformation(model)
-            openvino.runtime.serialize(model, output_path, output_path.replace(".xml", ".bin"))
+            if self._get_movement_sparsity_controller() is not None:
+                # Note:
+                # OpenVINO provides automated structured pruning of sparse structure in IR.
+                # However it requires static axes, current export utilizes nncf exporter
+                # which generates static-shaped IR.
+                f = os.path.join(output_dir, ONNX_WEIGHTS_NAME)
+                self.compression_controller.export_model(
+                    f, input_names=list(onnx_config.inputs.keys()), output_names=list(onnx_config.outputs.keys())
+                )
+                self._generate_openvino_ir(f)
+            else:
+                num_parameters = self.model.num_parameters()
+                save_as_external_data = use_external_data_format(num_parameters) or self.ov_config.save_onnx_model
+                f = io.BytesIO() if not save_as_external_data else os.path.join(output_dir, ONNX_WEIGHTS_NAME)
+                self._onnx_export(self.model, onnx_config, self.ov_config, f)
+
+                # Load and save the compressed model
+                model = core.read_model(f) if save_as_external_data else core.read_model(f.getvalue(), b"")
+                compress_quantize_weights_transformation(model)
+                openvino.runtime.serialize(model, output_path, output_path.replace(".xml", ".bin"))
+
+    def _get_movement_sparsity_controller(self) -> Optional[MovementSparsityController]:
+        if isinstance(self.compression_controller, MovementSparsityController):
+            return self.compression_controller
+        if isinstance(self.compression_controller, PTCompositeCompressionAlgorithmController):
+            for child_controller in self.compression_controller.child_ctrls:
+                if isinstance(child_controller, MovementSparsityController):
+                    return child_controller
+        return None
+
+    def _generate_openvino_ir(self, onnx_model):
+        if self.compression_controller is None:
+            return
+        try:
+            movement_controller = self._get_movement_sparsity_controller()
+            if (
+                movement_controller is not None
+                and movement_controller.scheduler.current_stage == MovementSchedulerStage.POST_WARMUP
+            ):
+                ov_model = convert_model(onnx_model, transform="Pruning")
+            else:
+                ov_model = convert_model(onnx_model)
+        except Exception as err:
+            logger.warning(
+                f"Error encountered during IR generation: {err}. Run continues, please check compression config and model.onnx"
+            )
+        else:
+            xml_pth = os.path.join(os.path.dirname(onnx_model), OV_XML_FILE_NAME)
+            bin_pth = os.path.join(os.path.dirname(onnx_model), OV_XML_FILE_NAME.replace(".xml", ".bin"))
+            openvino.runtime.serialize(ov_model, xml_pth, bin_pth)
 
     def _set_task(self):
         if self.task is None:
@@ -578,6 +749,7 @@ class OVTrainer(Trainer):
         model_inputs = config.generate_dummy_inputs(framework="pt")
         device = model.device
         model_inputs = dict((k, v.to(device)) for k, v in model_inputs.items())
+        self._set_signature_columns_if_needed()  # find model input names needed in ONNX export
         # Create ordered inputs for the ONNX export of NNCFNetwork as keyword arguments are currently not supported
         inputs = tuple([model_inputs.pop(key, None) for key in self._signature_columns if len(model_inputs) != 0])
 
