@@ -19,14 +19,12 @@ import os
 import sys
 import time
 import warnings
-from collections import defaultdict
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from packaging import version
 from torch.onnx import export as onnx_export
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -37,12 +35,12 @@ from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
 from transformers.deepspeed import deepspeed_init
 from transformers.integrations import hp_params
 from transformers.modeling_utils import PreTrainedModel, unwrap_model
-from transformers.onnx import FeaturesManager, OnnxConfig
-from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_less_than_1_11
+from transformers.onnx import OnnxConfig
+from transformers.pytorch_utils import is_torch_less_than_1_11
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer import TRAINER_STATE_NAME, TRAINING_ARGS_NAME
 from transformers.trainer_callback import TrainerCallback, TrainerState
-from transformers.trainer_pt_utils import IterableDatasetShard, get_parameter_names
+from transformers.trainer_pt_utils import IterableDatasetShard
 from transformers.trainer_utils import (
     EvalPrediction,
     HPSearchBackend,
@@ -53,7 +51,6 @@ from transformers.trainer_utils import (
 )
 from transformers.utils import (
     WEIGHTS_NAME,
-    TensorType,
     is_apex_available,
     is_sagemaker_mp_enabled,
     is_torch_tpu_available,
@@ -72,7 +69,7 @@ from nncf.torch import create_compressed_model
 from nncf.torch.composite_compression import PTCompositeCompressionAlgorithmController
 from nncf.torch.nncf_network import NNCFNetwork
 from openvino._offline_transformations import compress_quantize_weights_transformation
-from openvino.runtime import Core, PartialShape
+from openvino.runtime import Core
 from openvino.tools.mo import convert_model
 from optimum.exporters import TasksManager
 from optimum.exporters.onnx import OnnxConfig
