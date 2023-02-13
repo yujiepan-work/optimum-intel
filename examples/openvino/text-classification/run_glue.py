@@ -208,6 +208,12 @@ class ModelArguments:
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
+    nncf_compression_config: str = field(
+        default=None,
+        metadata={
+            "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."
+        },
+    )
 
 
 def main():
@@ -528,8 +534,8 @@ def main():
     else:
         data_collator = None
 
-    if training_args.nncf_compression_config is not None:
-        file_path = Path(training_args.nncf_compression_config).resolve()
+    if model_args.nncf_compression_config is not None:
+        file_path = Path(model_args.nncf_compression_config).resolve()
         with safe_open(file_path) as f:
             compression = json.load(f)
         ov_config = OVConfig(compression=compression)
