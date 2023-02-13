@@ -208,7 +208,7 @@ class ModelArguments:
         default=False,
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
-    nncf_compression_config: str = field(
+    nncf_compression_config: Optional[str] = field(
         default=None,
         metadata={
             "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."

@@ -95,7 +95,7 @@ class ModelArguments:
             )
         },
     )
-    nncf_compression_config: str = field(
+    nncf_compression_config: Optional[str] = field(
         default=None,
         metadata={
             "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."
