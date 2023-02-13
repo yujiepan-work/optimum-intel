@@ -12,13 +12,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-import copy
 import tempfile
 import unittest
 from functools import partial
 
 import numpy as np
-import torch
 from datasets import load_dataset
 from transformers import (
     AutoModelForQuestionAnswering,
@@ -164,3 +162,6 @@ class OVTrainerTest(unittest.TestCase):
             self.assertEqual(expected_fake_quantize, num_fake_quantize)
             self.assertEqual(expected_int8, num_int8)
 
+            tokens = tokenizer("This is a sample input", return_tensors="pt")
+            outputs = model(**tokens)
+            self.assertTrue("logits" in outputs)
