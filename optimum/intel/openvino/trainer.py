@@ -685,12 +685,11 @@ class OVTrainer(Trainer):
             )
             onnx_config = onnx_config_class(self.model.config)
 
-            if self._is_pruning_controller_exists():
+            if self._get_movement_sparsity_controller() is not None:
                 # Note:
                 # OpenVINO provides automated structured pruning of sparse structure in IR.
                 # However it requires static axes, current export utilizes nncf exporter
                 # which generates static-shaped IR.
-
                 f = os.path.join(output_dir, ONNX_WEIGHTS_NAME)
                 self.compression_controller.export_model(
                     f, input_names=list(onnx_config.inputs.keys()), output_names=list(onnx_config.outputs.keys())
@@ -707,47 +706,34 @@ class OVTrainer(Trainer):
                 compress_quantize_weights_transformation(model)
                 openvino.runtime.serialize(model, output_path, output_path.replace(".xml", ".bin"))
 
-    def _is_pruning_controller_exists(self):
-        if self.compression_controller is None:
-            return False
+    def _get_movement_sparsity_controller(self) -> Optional[MovementSparsityController]:
+        if isinstance(self.compression_controller, MovementSparsityController):
+            return self.compression_controller
         if isinstance(self.compression_controller, PTCompositeCompressionAlgorithmController):
             for child_controller in self.compression_controller.child_ctrls:
                 if isinstance(child_controller, MovementSparsityController):
-                    return True
-        elif isinstance(self.compression_controller, MovementSparsityController):
-            return True
-        return False
+                    return child_controller
+        return None
 
     def _generate_openvino_ir(self, onnx_model):
         if self.compression_controller is None:
             return
-
-        ir_pruning = False
-        if self._is_pruning_controller_exists():
-            pruning_controller = None
-            if isinstance(self.compression_controller, PTCompositeCompressionAlgorithmController):
-                for child_controller in self.compression_controller.child_ctrls:
-                    if isinstance(child_controller, MovementSparsityController):
-                        pruning_controller = child_controller
-            elif isinstance(self.compression_controller, MovementSparsityController):
-                pruning_controller = self.compression_controller
-
-            if pruning_controller is not None:
-                if pruning_controller.scheduler.current_stage == MovementSchedulerStage.POST_WARMUP:
-                    ir_pruning = True
-
         try:
-            if ir_pruning:
+            movement_controller = self._get_movement_sparsity_controller()
+            if (
+                movement_controller is not None
+                and movement_controller.scheduler.current_stage == MovementSchedulerStage.POST_WARMUP
+            ):
                 ov_model = convert_model(onnx_model, transform="Pruning")
             else:
                 ov_model = convert_model(onnx_model)
-        except:
+        except Exception as err:
             logger.warning(
-                "Error encountered during IR generation. Run continues, please check compression config and model.onnx"
+                f"Error encountered during IR generation: {err}. Run continues, please check compression config and model.onnx"
             )
         else:
             xml_pth = os.path.join(os.path.dirname(onnx_model), OV_XML_FILE_NAME)
-            bin_pth = xml_pth.replace(".xml", ".bin")
+            bin_pth = os.path.join(os.path.dirname(onnx_model), OV_XML_FILE_NAME.replace(".xml", ".bin"))
             openvino.runtime.serialize(ov_model, xml_pth, bin_pth)
 
     def _set_task(self):
