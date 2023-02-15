@@ -158,6 +158,8 @@ class OVTrainer(Trainer):
         self.teacher = None
         if teacher_model is not None:
             self.teacher = teacher_model.to(args.device)
+            if self.args.n_gpu > 1:
+                self.teacher = torch.nn.DataParallel(self.teacher)
             self.teacher.eval()
         self.compression_controller = None
 
