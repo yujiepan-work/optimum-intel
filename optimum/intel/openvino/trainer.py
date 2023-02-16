@@ -698,7 +698,7 @@ class OVTrainer(Trainer):
                 f = os.path.join(output_dir, ONNX_WEIGHTS_NAME)
                 original_device = get_model_device(self.model)
                 # prevent modification to original model by PTExporter which affects data parallel
-                model = deepcopy(self.model.cpu())
+                model = deepcopy(self.model)
                 exporter = PTExporter(
                     model, input_names=list(onnx_config.inputs.keys()), output_names=list(onnx_config.outputs.keys())
                 )
