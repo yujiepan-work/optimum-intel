@@ -699,7 +699,6 @@ class OVTrainer(Trainer):
                 # However it requires static axes, current export utilizes nncf exporter
                 # which generates static-shaped IR.
                 f = os.path.join(output_dir, ONNX_WEIGHTS_NAME)
-                original_device = get_model_device(self.model)
                 # prevent modification to original model by PTExporter which affects data parallel
                 model = deepcopy(self.model)
                 exporter = PTExporter(
@@ -707,7 +706,6 @@ class OVTrainer(Trainer):
                 )
                 exporter.export_model(f)
                 self._generate_openvino_ir(f)
-                self.model.to(original_device)
             else:
                 num_parameters = self.model.num_parameters()
                 save_as_external_data = use_external_data_format(num_parameters) or self.ov_config.save_onnx_model
