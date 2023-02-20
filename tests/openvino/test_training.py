@@ -73,7 +73,7 @@ UNSTRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_BERT["params"]["enable_structured_mask
 
 def initialize_movement_sparsifier_parameters_by_sparsity(
     movement_controller: MovementSparsityController,
-    sparsity: float = 0.9,
+    sparsity: float = 0.95,
     seed: int = 42,
     negative_value: float = -10.0,
     positive_value: float = 10.0,
@@ -93,7 +93,7 @@ def initialize_movement_sparsifier_parameters_by_sparsity(
             )
             operand.weight_importance.copy_(weight_init_tensor)
             if operand.prune_bias:
-                bias_init_tensor = torch.zeros_like(operand.bias_importance)
+                bias_init_tensor = torch.ones_like(operand.bias_importance) * negative_value
                 operand.bias_importance.copy_(bias_init_tensor)
 
 
@@ -276,8 +276,8 @@ class OVTrainerTrainingTest(unittest.TestCase):
                 MovementSparsityController
             )  # pylint: disable=protected-access
             if movement_controller is not None:
-                # initializes the binary masks with many zeros to ensure sparsity
-                initialize_movement_sparsifier_parameters_by_sparsity(movement_controller, sparsity=0.9)
+                # make sure the binary masks will have many zeros
+                initialize_movement_sparsifier_parameters_by_sparsity(movement_controller, sparsity=0.95)
 
             # check evaluation can work even before training.
             metrics = trainer.evaluate()
