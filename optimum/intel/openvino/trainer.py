@@ -61,6 +61,7 @@ from transformers.utils import (
 )
 
 import openvino
+import openvino.runtime
 from nncf import NNCFConfig
 from nncf.common.logging.logger import nncf_logger, set_log_level
 from nncf.common.utils.tensorboard import prepare_for_tensorboard
@@ -751,14 +752,14 @@ class OVTrainer(Trainer):
             and movement_controller.scheduler.current_stage == MovementSchedulerStage.POST_WARMUP
         )
 
-    def _reshape_ir(self, ov_model: OVModel, static_shape: bool) -> OVModel:
+    def _reshape_ir(self, ov_model: openvino.runtime.Model, static_shape: bool) -> openvino.runtime.Model:
         new_input_cfg = dict()
         for input_ in ov_model.inputs:
             if static_shape is True:
                 new_input_cfg[input_.any_name] = PartialShape(list(range(1, len(input_.partial_shape) + 1)))
             else:
                 new_input_cfg[input_.any_name] = PartialShape([-1] * len(input_.partial_shape))
-        ov_model.reshape(new_input_cfg)  # TODO(yujie): type incorrect, why runnable?
+        ov_model.reshape(new_input_cfg)
         return ov_model
 
     def _set_task(self):
