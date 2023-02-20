@@ -108,7 +108,7 @@ class OVTrainerTestDescriptor:
     compression_metrics: List[str] = field(default_factory=list)
 
 
-OVTRAINER_TEST_DESCRIPTORS = {
+OVTRAINER_TRAINING_TEST_DESCRIPTORS = {
     "distillation": OVTrainerTestDescriptor(
         model_id="hf-internal-testing/tiny-bert",
         teacher_model_id="hf-internal-testing/tiny-bert",
@@ -241,7 +241,7 @@ OVTRAINER_TEST_DESCRIPTORS = {
 
 
 class OVTrainerTrainingTest(unittest.TestCase):
-    @parameterized.expand(OVTRAINER_TEST_DESCRIPTORS.items())
+    @parameterized.expand(OVTRAINER_TRAINING_TEST_DESCRIPTORS.items())
     def test_training(self, _, desc: OVTrainerTestDescriptor):
         self.prepare(desc)
         num_train_epochs = 3

@@ -710,15 +710,23 @@ class OVTrainer(Trainer):
 
             # Prune IR if structured pruning is conducted on the model
             if self._should_apply_pruning_transform():
-                # OpenVINO IR pruning requires static-shaped input
-                ov_model = self._reshape_ir(ov_model, static_shape=True)
-                apply_moc_transformations(ov_model)
-                if self._get_compression_controller_by_cls(QuantizationController) is not None:
-                    compress_quantize_weights_transformation(ov_model)
-                apply_user_transformations(ov_model, [("Pruning", {})])
-                apply_fused_names_cleanup(ov_model)
-                # Reshape back to dynamic shape IR
-                ov_model = self._reshape_ir(ov_model, static_shape=False)
+                try:
+                    # OpenVINO IR pruning requires static-shaped input
+                    ov_model = self._reshape_ir(ov_model, static_shape=True)
+                    apply_moc_transformations(ov_model)
+                    if self._get_compression_controller_by_cls(QuantizationController) is not None:
+                        compress_quantize_weights_transformation(ov_model)
+                    apply_user_transformations(ov_model, [("Pruning", {})])
+                    apply_fused_names_cleanup(ov_model)
+                    # Reshape back to dynamic shape IR
+                    ov_model = self._reshape_ir(ov_model, static_shape=False)
+                except Exception as err:
+                    onnx_path = Path(output_dir, ONNX_WEIGHTS_NAME)
+                    if not save_as_external_data:
+                        onnx_path.write_bytes(f.getvalue())
+                    logger.warning(
+                        f"Error encountered during IR pruning: {err}. {onnx_path} is dumped for debug. Run continues."
+                    )
             else:
                 if self._get_compression_controller_by_cls(QuantizationController) is not None:
                     compress_quantize_weights_transformation(ov_model)
