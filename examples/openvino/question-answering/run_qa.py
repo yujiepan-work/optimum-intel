@@ -55,8 +55,6 @@ from utils_qa import postprocess_qa_predictions
 from nncf_patch_for_mobilebert import nncf_patch_for_mobilebert
 from nncf_patch_for_mobilebert import get_cosine_with_decayed_hard_restarts_schedule_with_warmup
 
-NUM_HIDDEN_LAYERS = 14
-
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0")
 
@@ -230,6 +228,11 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
 
 
+@dataclass
+class CustomizedArguments:
+    num_hidden_layers: int = field(default=24)
+
+
 class SaveBestModelCallback(transformers.trainer_callback.TrainerCallback):
     from transformers.trainer_callback import TrainerState, TrainerControl
     from transformers import TrainingArguments
@@ -273,13 +276,13 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, OVTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, OVTrainingArguments, CustomizedArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args, custom_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args, custom_args = parser.parse_args_into_dataclasses()
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -373,7 +376,7 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
-        num_hidden_layers=NUM_HIDDEN_LAYERS,
+        num_hidden_layers=custom_args.num_hidden_layers,
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
@@ -750,17 +753,16 @@ def main():
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        if training_args.num_train_epochs > 0:
+            train_result = trainer.train(resume_from_checkpoint=checkpoint)
+            metrics = train_result.metrics
+            max_train_samples = (
+                data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+            )
+            metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+            trainer.log_metrics("train", metrics)
+            trainer.save_metrics("train", metrics)
         trainer.save_model()  # Saves the tokenizer too for easy upload
-
-        metrics = train_result.metrics
-        max_train_samples = (
-            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-        )
-        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
-
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
         trainer.save_state()
 
     # Evaluation
