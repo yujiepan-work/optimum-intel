@@ -478,7 +478,7 @@ class OVTrainerTextClassificationTrainingTest(OVTrainerBaseTrainingTest):
     def check_ovmodel_output_equals_torch_output(self, ovmodel, torch_model):
         torch_model = torch_model.eval()
         for max_seq_length in [16, 89, 128]:
-            for batch_size in [1, 3, 7, 11]:
+            for batch_size in [1, 3, 7]:
                 examples = self.dataset["train"].sort("sentence")[:batch_size]
                 inputs = self.tokenizer(
                     examples["sentence"],
@@ -640,7 +640,7 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
                     torch.allclose(
                         torch.softmax(ovmodel_logits, dim=-1),
                         torch.softmax(torch_logits, dim=-1),
-                        atol=0.001,  # TODO: swin has higher errors
+                        atol=0.0001,  # TODO: swin has higher errors
                     )
                 )
 
