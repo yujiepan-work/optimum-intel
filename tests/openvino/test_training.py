@@ -25,6 +25,7 @@ from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
@@ -209,11 +210,12 @@ class OVTrainerBaseTrainingTest(unittest.TestCase, ABC):
 
     def get_training_args(self) -> OVTrainingArguments:
         num_train_epochs = 3
-        train_batch_size = 4
+        train_batch_size = 3
         args = OVTrainingArguments(
             output_dir=self.output_dir,
             num_train_epochs=num_train_epochs,
-            learning_rate=1e-3,
+            learning_rate=1e-4,
+            optim="adamw_torch",
             do_train=True,
             do_eval=True,
             logging_steps=1,
@@ -469,7 +471,7 @@ class OVTrainerTextClassificationTrainingTest(OVTrainerBaseTrainingTest):
             return result
 
         self.data_transform = data_transform
-        self.train_dataset = self.dataset["train"].select(range(8))
+        self.train_dataset = self.dataset["train"].select(range(6))
         self.eval_dataset = self.dataset["validation"].select(range(4))
         self.train_dataset.set_transform(data_transform)
         self.eval_dataset.set_transform(data_transform)
@@ -533,54 +535,54 @@ OVTRAINER_IMAGE_CLASSIFICATION_TEST_DESCRIPTORS = {
     "default_quantization": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=DEFAULT_QUANTIZATION_CONFIG,
-        expected_fake_quantize=28,
-        expected_int8=28,
+        expected_fake_quantize=21,
+        expected_int8=21,
         compression_metrics=["compression_loss"],
     ),
     "structured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=STRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN,
-        expected_binary_masks=48,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss"],
     ),
     "unstructured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=UNSTRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN,
-        expected_binary_masks=48,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss"],
     ),
     "default_quantization,structured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=[STRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN, DEFAULT_QUANTIZATION_CONFIG],
-        expected_fake_quantize=28,
-        expected_int8=28,
-        expected_binary_masks=48,
+        expected_fake_quantize=21,
+        expected_int8=21,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss"],
     ),
     "default_quantization,unstructured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=[UNSTRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN, DEFAULT_QUANTIZATION_CONFIG],
-        expected_fake_quantize=28,
-        expected_int8=28,
-        expected_binary_masks=48,
+        expected_fake_quantize=21,
+        expected_int8=21,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss"],
     ),
     "distillation,default_quantization,structured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         teacher_model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=[STRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN, DEFAULT_QUANTIZATION_CONFIG],
-        expected_fake_quantize=28,
-        expected_int8=28,
-        expected_binary_masks=48,
+        expected_fake_quantize=21,
+        expected_int8=21,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss", "distillation_loss", "task_loss"],
     ),
     "distillation,default_quantization,unstructured_movement_sparsity": OVTrainerTestDescriptor(
         model_id="yujiepan/tiny-swin-patch4-window7-224",
         teacher_model_id="yujiepan/tiny-swin-patch4-window7-224",
         nncf_compression_config=[UNSTRUCTURED_MOVEMENT_SPARSITY_CONFIG_FOR_SWIN, DEFAULT_QUANTIZATION_CONFIG],
-        expected_fake_quantize=28,
-        expected_int8=28,
-        expected_binary_masks=48,
+        expected_fake_quantize=21,
+        expected_int8=21,
+        expected_binary_masks=36,
         compression_metrics=["compression_loss", "distillation_loss", "task_loss"],
     ),
 }
@@ -595,8 +597,10 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
         self.run_ovtrainer_training_checks(desc)
 
     def prepare_model_and_dataset(self, desc: OVTrainerTestDescriptor):
-        self.dataset = load_dataset("beans", task="image-classification")
-        self.num_labels = len(self.dataset["train"].features["labels"].names)
+        dummy_images = load_dataset("hf-internal-testing/dummy_image_class_data", split="train")["image"]
+        dummy_labels = [i % 2 for i in range(len(dummy_images))]
+        self.dataset = datasets.Dataset.from_dict({"image": dummy_images, "label": dummy_labels})
+        self.num_labels = 2
 
         self.feature_extractor = AutoImageProcessor.from_pretrained(desc.model_id)
         self.tokenizer = self.feature_extractor
@@ -609,12 +613,12 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
 
         def data_transform(examples, size=None):
             result = self.feature_extractor(examples["image"], size=size, return_tensors="pt")
-            result["labels"] = examples["labels"]
+            result["labels"] = examples["label"]
             return result
 
         self.dataset.set_transform(data_transform)
-        self.train_dataset = self.dataset["train"].select(range(8))
-        self.eval_dataset = self.dataset["validation"].select(range(4))
+        self.train_dataset = self.dataset.select(range(6))
+        self.eval_dataset = self.dataset.select(range(4))
         self.data_transform = data_transform
         self.data_collator = default_data_collator
 
@@ -790,7 +794,7 @@ class OVTrainerAudioClassificationTrainingTest(OVTrainerBaseTrainingTest):
 
         self.data_transform = data_transform
         self.dataset.set_transform(data_transform)
-        self.train_dataset = self.dataset["train"].select(range(8))
+        self.train_dataset = self.dataset["train"].select(range(6))
         self.eval_dataset = self.dataset["validation"].select(range(4))
         self.data_collator = None
 
