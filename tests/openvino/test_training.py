@@ -470,15 +470,15 @@ class OVTrainerTextClassificationTrainingTest(OVTrainerBaseTrainingTest):
             return result
 
         self.data_transform = data_transform
-        self.train_dataset = self.dataset["train"].select(range(6))
-        self.eval_dataset = self.dataset["validation"].select(range(4))
-        self.train_dataset.set_transform(data_transform)
-        self.eval_dataset.set_transform(data_transform)
+        self.dataset.set_transform(data_transform)
+        raw_dataset = self.dataset["train"].shuffle(42)
+        self.train_dataset = raw_dataset.select(range(6))
+        self.eval_dataset = raw_dataset.select(range(6, 10))
         self.data_collator = None
 
     def check_ovmodel_output_equals_torch_output(self, ovmodel, torch_model):
         torch_model = torch_model.eval()
-        for max_length in [16, 128]:
+        for max_length in [64, 128]:
             for batch_size in [1, 4]:
                 self.trainer.args.per_device_eval_batch_size = batch_size
                 dataset = self.eval_dataset.set_transform(partial(self.data_transform, max_length=max_length))
@@ -608,11 +608,11 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
             result["labels"] = examples["labels"]
             return result
 
+        self.data_transform = data_transform
         self.dataset.set_transform(data_transform)
         raw_dataset = self.dataset["train"].shuffle(seed=42)
         self.train_dataset = raw_dataset.select(range(6))
-        self.eval_dataset = raw_dataset.select(range(7, 10))
-        self.data_transform = data_transform
+        self.eval_dataset = raw_dataset.select(range(6, 10))
         self.data_collator = default_data_collator
 
     def get_ov_model(self, model_id=None) -> OVModel:
@@ -788,7 +788,7 @@ class OVTrainerAudioClassificationTrainingTest(OVTrainerBaseTrainingTest):
         self.data_transform = data_transform
         self.dataset.set_transform(data_transform)
         self.train_dataset = self.dataset["test"].select(range(6))
-        self.eval_dataset = self.dataset["test"].select(range(7, 10))
+        self.eval_dataset = self.dataset["test"].select(range(6, 10))
         self.data_collator = None
 
     def check_ovmodel_reshaping(self, ovmodel: OVModel):
