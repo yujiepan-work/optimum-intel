@@ -25,7 +25,6 @@ from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-import datasets
 import numpy as np
 import torch
 from datasets import load_dataset
@@ -479,27 +478,22 @@ class OVTrainerTextClassificationTrainingTest(OVTrainerBaseTrainingTest):
 
     def check_ovmodel_output_equals_torch_output(self, ovmodel, torch_model):
         torch_model = torch_model.eval()
-        for max_seq_length in [16, 128]:
-            for batch_size in [1, 3]:
-                examples = self.dataset["train"].sort("sentence")[:batch_size]
-                inputs = self.tokenizer(
-                    examples["sentence"],
-                    padding="max_length",
-                    max_length=max_seq_length,
-                    truncation=True,
-                    return_tensors="pt",
-                )
-                ovmodel_outputs = ovmodel(**inputs)
-                self.assertIn("logits", ovmodel_outputs)
-                ovmodel_logits = ovmodel_outputs.logits
-                with torch.no_grad():
-                    torch_logits = torch_model(**inputs).logits
-                torch.testing.assert_close(
-                    torch.softmax(ovmodel_logits, dim=-1),
-                    torch.softmax(torch_logits, dim=-1),
-                    atol=1e-4,
-                    rtol=1e-4,
-                )
+        for max_length in [16, 128]:
+            for batch_size in [1, 4]:
+                self.trainer.args.per_device_eval_batch_size = batch_size
+                dataset = self.eval_dataset.set_transform(partial(self.data_transform, max_length=max_length))
+                for inputs in self.trainer.get_eval_dataloader(dataset):
+                    ovmodel_outputs = ovmodel(**inputs)
+                    self.assertIn("logits", ovmodel_outputs)
+                    ovmodel_logits = ovmodel_outputs.logits
+                    with torch.no_grad():
+                        torch_logits = torch_model(**inputs).logits
+                    torch.testing.assert_close(
+                        torch.softmax(ovmodel_logits, dim=-1),
+                        torch.softmax(torch_logits, dim=-1),
+                        atol=1e-4,
+                        rtol=1e-4,
+                    )
 
     def check_ovmodel_reshaping(self, ovmodel: OVModel):
         self.check_if_ovmodel_is_dynamic(ovmodel, True)
@@ -597,10 +591,8 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
         self.run_ovtrainer_training_checks(desc)
 
     def prepare_model_and_dataset(self, desc: OVTrainerTestDescriptor):
-        dummy_images = load_dataset("hf-internal-testing/dummy_image_class_data", split="train")["image"]
-        dummy_labels = [i % 2 for i in range(len(dummy_images))]
-        self.dataset = datasets.Dataset.from_dict({"image": dummy_images, "label": dummy_labels})
-        self.num_labels = 2
+        self.dataset = load_dataset("hf-internal-testing/cats_vs_dogs_sample")
+        self.num_labels = len(self.dataset["train"].features["labels"].names)
 
         self.feature_extractor = AutoImageProcessor.from_pretrained(desc.model_id)
         self.tokenizer = self.feature_extractor
@@ -613,12 +605,13 @@ class OVTrainerImageClassificationTrainingTest(OVTrainerBaseTrainingTest):
 
         def data_transform(examples, size=None):
             result = self.feature_extractor(examples["image"], size=size, return_tensors="pt")
-            result["labels"] = examples["label"]
+            result["labels"] = examples["labels"]
             return result
 
         self.dataset.set_transform(data_transform)
-        self.train_dataset = self.dataset.select(range(6))
-        self.eval_dataset = self.dataset.select(range(4))
+        raw_dataset = self.dataset["train"].shuffle(seed=42)
+        self.train_dataset = raw_dataset.select(range(6))
+        self.eval_dataset = raw_dataset.select(range(7, 10))
         self.data_transform = data_transform
         self.data_collator = default_data_collator
 
@@ -767,8 +760,8 @@ class OVTrainerAudioClassificationTrainingTest(OVTrainerBaseTrainingTest):
         self.run_ovtrainer_training_checks(desc)
 
     def prepare_model_and_dataset(self, desc: OVTrainerTestDescriptor):
-        self.dataset = load_dataset("superb", "ks")
-        self.num_labels = len(self.dataset["train"].features["label"].names)
+        self.dataset = load_dataset("anton-l/superb_dummy", "ks")
+        self.num_labels = len(self.dataset["test"].features["label"].names)
 
         self.feature_extractor = AutoFeatureExtractor.from_pretrained(desc.model_id)
         self.tokenizer = self.feature_extractor
@@ -779,23 +772,23 @@ class OVTrainerAudioClassificationTrainingTest(OVTrainerBaseTrainingTest):
                 desc.teacher_model_id, num_labels=self.num_labels
             )
 
-        def random_subsample(wav: np.ndarray, max_length: int = 16000):
-            if len(wav) <= max_length:
-                return wav
-            random_offset = random.randint(0, len(wav) - max_length - 1)
-            return wav[random_offset : random_offset + max_length]
-
         def data_transform(examples, max_length: int = 16000):
             sampling_rate = self.feature_extractor.sampling_rate
-            audio = random_subsample(examples["audio"][0]["array"], max_length=max_length)
-            batch = self.feature_extractor(audio, sampling_rate=sampling_rate, return_tensors="pt")
+            batch = self.feature_extractor(
+                examples["speech"],
+                padding="max_length",
+                max_length=max_length,
+                truncation=True,
+                sampling_rate=sampling_rate,
+                return_tensors="pt",
+            )
             batch["labels"] = examples["label"]
             return batch
 
         self.data_transform = data_transform
         self.dataset.set_transform(data_transform)
-        self.train_dataset = self.dataset["train"].select(range(6))
-        self.eval_dataset = self.dataset["validation"].select(range(4))
+        self.train_dataset = self.dataset["test"].select(range(6))
+        self.eval_dataset = self.dataset["test"].select(range(7, 10))
         self.data_collator = None
 
     def check_ovmodel_reshaping(self, ovmodel: OVModel):
