@@ -16,19 +16,19 @@ limitations under the License.
 
 # Audio classification examples
 
-This folder contains [`run_audio_classification.py`](https://github.com/huggingface/optimum/blob/main/examples/openvino/audio-classification/run_audio_classification.py), a script to fine-tune a 🤗 Transformers model on the 🗣️ [Keyword Spotting subset](https://huggingface.co/datasets/superb#ks) of the SUPERB dataset while applying quantization aware training (QAT). QAT can be easily applied by replacing the Transformers [`Trainer`](https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer) with the Optimum [`OVTrainer`]. Any model from our [hub](https://huggingface.co/models) can be fine-tuned and quantized, as long as the model is supported by the [`AutoModelForAudioClassification`](https://huggingface.co/docs/transformers/main/en/model_doc/auto#transformers.AutoModelForAudioClassification) API.
+This folder contains [`run_audio_classification.py`](https://github.com/huggingface/optimum/blob/main/examples/openvino/audio-classification/run_audio_classification.py), a script to fine-tune a 🤗 Transformers model on the 🗣️ [Keyword Spotting subset](https://huggingface.co/datasets/superb#ks) of the SUPERB dataset while applying Quantization-Aware Training (QAT). QAT can be easily applied by replacing the Transformers [`Trainer`](https://huggingface.co/docs/transformers/main/en/main_classes/trainer#trainer) with the Optimum [`OVTrainer`]. Any model from our [hub](https://huggingface.co/models) can be fine-tuned and quantized, as long as the model is supported by the [`AutoModelForAudioClassification`](https://huggingface.co/docs/transformers/main/en/model_doc/auto#transformers.AutoModelForAudioClassification) API.
 
 ### Fintuning Wav2Vec2 on Keyword Spotting with QAT
 
-The following command shows how to fine-tune [wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base) on the 🗣️ [Keyword Spotting subset](https://huggingface.co/datasets/superb#ks) of the SUPERB dataset with Quantization Aware Training (QAT).
+The following command shows how to fine-tune [Wav2Vec2-base](https://huggingface.co/facebook/wav2vec2-base) on the 🗣️ [Keyword Spotting subset](https://huggingface.co/datasets/superb#ks) of the SUPERB dataset with Quantization-Aware Training (QAT). The `OVTrainer` uses a default quantization configuration which should work in many cases, but we can also customize the algorithm details. Here, we quantize the Wav2Vec2-base model with a custom configuration file specified by `--nncf_compression_config`. For more details on the quantization configuration, see NNCF documentation [here](https://github.com/openvinotoolkit/nncf/blob/develop/docs/compression_algorithms/Quantization.md).
 
 ```bash
 python run_audio_classification.py \
     --model_name_or_path facebook/wav2vec2-base \
+    --nncf_compression_config configs/wav2vec2-base-qat.json \
     --dataset_name superb \
     --dataset_config_name ks \
     --output_dir /tmp/qat-wav2vec2-base-ft-keyword-spotting \
-    --nncf_compression_config configs/wav2vec2-base-qat.json \
     --overwrite_output_dir \
     --remove_unused_columns False \
     --do_train \
@@ -53,19 +53,11 @@ python run_audio_classification.py \
     --seed 42
 ```
 
-On a single V100 GPU, this script should run in ~45 minutes and yield quantized model with accuracy of **98.1%**.
+On a single V100 GPU, this script should run in ~45 minutes and yield a quantized model with accuracy of **97.5%**.
 
 ### Joint Pruning, Quantization and Distillation (JPQD) of Wav2Vec2 on Keyword Spotting
 
-`OVTrainer` also provides advanced optimization workflow via NNCF to structurally prune, quantize and distillation. Following is an example to jointly prune, quantize, distill a Wav2Vec2 model for keyword spotting task. Do take note of additional NNCF config `--nncf_compression_config`. More on how to configure the pruning algorithm, see NNCF documentation [here](https://github.com/openvinotoolkit/nncf/blob/develop/nncf/experimental/torch/sparsity/movement/MovementSparsity.md).
-
-To run the JPQD example, please install optimum-intel from source. This command will install or upgrade optimum-intel and all necessary dependencies:
-
-```bash
-python -m pip install --upgrade "git+https://github.com/huggingface/optimum-intel.git#egg=optimum-intel[openvino, nncf]"
-```
-
-After installation, launch the run with:
+`OVTrainer` also provides advanced optimization workflow via NNCF to structurally prune, quantize and distill. Following is an example of joint pruning, quantization and distillation on Wav2Vec2-base model for keyword spotting task. To enable JPQD optimization, use an alternative configuration specified with `--nncf_compression_config`. For more details on how to configure the pruning algorithm, see NNCF documentation [here](https://github.com/openvinotoolkit/nncf/blob/develop/nncf/experimental/torch/sparsity/movement/MovementSparsity.md).
 
 ```bash
 python run_audio_classification.py \
@@ -97,7 +89,7 @@ python run_audio_classification.py \
     --save_strategy epoch \
     --load_best_model_at_end False \
     --save_total_limit 3 \
-    --seed 42
+    --seed 0
 ```
 
-This script should take about 3hrs on a single V100 GPU and produce a 80% quantized wav2vec2 with ~80% structured sparsity in its linear layers. The model accuracy should converge to about 97.5%. Its IR gives an additional ~50% throughput over quantize-only IR on AWS EC2 instance (c6i.32xlarge).
+This script should take about 3 hours on a single V100 GPU and produce a quantized Wav2Vec2-base model with ~80% structured sparsity in its linear layers. The model accuracy should converge to about 97.5%.
