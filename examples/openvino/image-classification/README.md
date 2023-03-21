@@ -49,8 +49,9 @@ On a single V100 GPU, this example takes about 1 minute and yields a quantized m
 
 ```bash
 python run_image_classification.py \
-    --model_name_or_path microsoft/swin-base-patch4-window7-224 \
+    --model_name_or_path skylord/swin-finetuned-food101 \
     --teacher_model_name_or_path skylord/swin-finetuned-food101 \
+    --nncf_compression_config configs/swin-base-jpqd.json \
     --distillation_weight 0.9 \
     --ignore_mismatched_sizes \
     --dataset_name food101 \
@@ -60,19 +61,18 @@ python run_image_classification.py \
     --per_device_train_batch_size 16 \
     --gradient_accumulation_steps 4 \
     --learning_rate 5e-5 \
-    --warmup_ratio 0.1 \
+    --warmup_ratio 0.0 \
     --num_train_epochs 10 \
     --logging_steps 1 \
     --do_eval \
     --per_device_eval_batch_size 128 \
     --evaluation_strategy steps \
     --eval_steps 500 \
-    --save_steps 1000 \
-    --save_total_limit 5 \
+    --save_steps 500 \
+    --save_total_limit 3 \
     --seed 42 \
     --overwrite_output_dir \
-    --output_dir /tmp/food101_outputs/ \
-    --nncf_compression_config configs/swin-base-jpqd.json
+    --output_dir /tmp/food101_outputs/
 ```
 
-This example results in a quantized swin-base model with ~40% sparsity in its linear layers of the transformer blocks, giving 90.7% accuracy on food101 and taking about 12.5 hours on a single V100 GPU.
+This example results in a quantized swin-base model with ~38% structured sparsity in its linear layers of the transformer blocks, giving 91.8% accuracy on food101 and taking about 12.5 hours on a single V100 GPU.
