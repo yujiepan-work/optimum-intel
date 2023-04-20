@@ -51,6 +51,9 @@ from optimum.intel.openvino import OVConfig, OVTrainingArguments
 from trainer_qa import QuestionAnsweringOVTrainer
 from utils_qa import postprocess_qa_predictions
 
+# put this at the end of imports
+from nncf_patch_for_mobilebert import nncf_patch_for_mobilebert
+
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0")
@@ -99,6 +102,16 @@ class ModelArguments:
         default=None,
         metadata={
             "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."
+        },
+    )
+    num_tx_block: int = field(
+        default=0,
+        metadata={
+            "help": (
+                "specify number of transformer blocks. "
+                "e.g. setting 15 for mobilebert will drop the later 10 out of the 24 tx block in mobilebert"
+                "Currently this only applies to mobilebert"
+            )
         },
     )
 
@@ -227,6 +240,7 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
 
 
+@nncf_patch_for_mobilebert()
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -327,12 +341,22 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-    )
+    if ('mobilebert' in model_args.model_name_or_path.lower()) and (model_args.num_tx_block > 0):
+        config = AutoConfig.from_pretrained(
+            model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            num_hidden_layers=model_args.num_tx_block,
+        )
+    else:
+        config = AutoConfig.from_pretrained(
+            model_args.config_name if model_args.config_name else model_args.model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
