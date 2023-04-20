@@ -51,9 +51,6 @@ from optimum.intel.openvino import OVConfig, OVTrainingArguments
 from trainer_qa import QuestionAnsweringOVTrainer
 from utils_qa import postprocess_qa_predictions
 
-# put this at the end of imports
-from nncf_patch_for_mobilebert import nncf_patch_for_mobilebert
-
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0")
@@ -240,7 +237,6 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json"], "`test_file` should be a csv or a json file."
 
 
-@nncf_patch_for_mobilebert()
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
