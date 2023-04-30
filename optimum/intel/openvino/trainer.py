@@ -198,7 +198,10 @@ class OVTrainer(Trainer):
         if self._signature_columns is None:
             # Inspect model forward signature to keep only the arguments it accepts.
             if isinstance(self.model, NNCFNetwork):
-                signature = inspect.signature(self.model.get_nncf_wrapped_model().forward)
+                try:
+                    signature = inspect.signature(self.model.get_nncf_wrapped_model().forward)
+                except:
+                    signature = inspect.signature(self.model.forward) # nncf change in v2.5
             else:
                 signature = inspect.signature(self.model.forward)
             self._signature_columns = list(signature.parameters.keys())
