@@ -1,0 +1,4 @@
+{
+    "algorithm": "NoCompressionAlgorithm",
+    // need to disable NNCFConfig.validate(nncf_dict)
+}
