@@ -26,13 +26,16 @@ import math
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from itertools import chain
 from typing import Optional
 
 import datasets
 import evaluate
+import jstyleson as json
 import torch
 from datasets import load_dataset
+from nncf.common.utils.os import safe_open
 
 import transformers
 from transformers import (
@@ -53,9 +56,10 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from optimum.intel.openvino import OVConfig, OVTrainer, OVTrainingArguments
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.31.0.dev0")
+check_min_version("4.30.0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -79,6 +83,9 @@ class ModelArguments:
                 "The model checkpoint for weights initialization.Don't set if you want to train a model from scratch."
             )
         },
+    )
+    teacher_model_name_or_path: str = field(
+        default=None, metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
     model_type: Optional[str] = field(
         default=None,
@@ -137,6 +144,12 @@ class ModelArguments:
                 "It is an option to create the model as an empty shell, then only materialize its parameters when the pretrained weights are loaded."
                 "set True will benefit LLM loading time and RAM consumption."
             )
+        },
+    )
+    nncf_compression_config: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."
         },
     )
 
@@ -424,6 +437,13 @@ def main():
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
+    teacher_model = None
+    if model_args.teacher_model_name_or_path is not None:
+        teacher_model = AutoModelForCausalLM.from_pretrained(
+            model_args.teacher_model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.teacher_model_name_or_path),
+            cache_dir=model_args.cache_dir,
+        )
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
     embedding_size = model.get_input_embeddings().weight.shape[0]
@@ -557,9 +577,21 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    if model_args.nncf_compression_config is not None:
+        file_path = Path(model_args.nncf_compression_config).resolve()
+        with safe_open(file_path) as f:
+            compression = json.load(f)
+        ov_config = OVConfig(compression=compression)
+    else:
+        ov_config = OVConfig()
+    ov_config.log_dir = training_args.output_dir
+
     # Initialize our Trainer
-    trainer = Trainer(
+    trainer = OVTrainer(
         model=model,
+        teacher_model=teacher_model,
+        task="causal-lm",
+        ov_config=ov_config,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,

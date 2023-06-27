@@ -1,0 +1,41 @@
+{
+    "algorithm": "quantization",
+    "initializer": {
+        "range": {
+            "num_init_samples": 2,
+            // "num_init_samples": 16,
+            // "type": "percentile",
+            // "params":
+            // {
+            //     "min_percentile": 0.01,
+            //     "max_percentile": 99.99
+            // }
+        },
+        "batchnorm_adaptation": {
+            "num_bn_adaptation_samples": 0
+        }
+    },
+    "ignored_scopes": [
+        // Intermediate embedding sum results
+        "GPT2LMHeadModel/GPT2Model[transformer]/__add___0",
+
+        // Scaling in attention
+        "{re}.*Attention\\[attn\\]/__truediv___0",
+
+        // Pre-LayerNorm additions
+        "{re}.*Block\\[[0-9]*\\]/__add___0",
+        "{re}.*Block\\[[0-9]*\\]/__add___1",
+
+        // LM head
+        "GPT2LMHeadModel/NNCFLinear[lm_head]/linear_0"
+    ],
+    "activations":
+    {
+        "mode": "symmetric"
+    },
+    "weights":
+    {
+        "mode": "symmetric",
+        "signed": true
+    }
+}
