@@ -17,6 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Tuple, Union
 
+import time
 import numpy as np
 import openvino
 import torch
@@ -118,6 +119,9 @@ class OVBaseDecoderModel(OVModel):
             **kwargs,
         )
 
+        self.bench_mode = kwargs.pop("bench_mode", False)
+        if self.bench_mode:
+            self.token_latency = []
         use_cache = kwargs.pop("use_cache", True)
         self.use_cache = any("past_key_values" in key.get_any_name() for key in model.inputs)
         self.main_input_name = "input_ids"
@@ -257,6 +261,12 @@ class OVModelForCausalLM(OVBaseDecoderModel, GenerationMixin):
             checkpoint="gpt2",
         )
     )
+    def reset_benchdata(self):
+        if self.bench_mode:
+            self.token_latency = []
+        else:
+            logging.warn("benchmark mode is not enabled")
+
     def forward(
         self,
         input_ids: torch.LongTensor,
@@ -300,9 +310,16 @@ class OVModelForCausalLM(OVBaseDecoderModel, GenerationMixin):
         if "attention_mask" in self.input_names and attention_mask is not None:
             inputs["attention_mask"] = np.array(attention_mask)
 
-        # Run inference
-        self.request.start_async(inputs, shared_memory=True)
-        self.request.wait()
+        if self.bench_mode is True:
+            t_start = time.perf_counter()
+            # Run inference
+            self.request.start_async(inputs, shared_memory=True)
+            self.request.wait()
+            t_end = time.perf_counter()
+            self.token_latency.append(t_end - t_start)
+        else:
+            self.request.start_async(inputs, shared_memory=True)
+            self.request.wait()
 
         logits = torch.from_numpy(self.request.get_tensor("logits").data).to(self.device)
 
