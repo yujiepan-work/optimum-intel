@@ -29,7 +29,7 @@ model_id="vuiseng9/ov-gpt2-fp32-kv-cache"
 model = OVModelForCausalLM.from_pretrained(model_id, use_cache=True)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 generator_pipe = pipeline('text-generation', model=model, tokenizer=tokenizer)
-output = generator_pipe("It's a beautiful day ...", max_length=30, num_return_sequences=1)
+output = generator_pipe("It's a beautiful day ...", max_length=30, num_return_sequences=1, num_beams=5)
 print(output[0]['generated_text'])
 
 print("- end of generation -")
