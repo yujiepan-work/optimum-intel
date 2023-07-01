@@ -6,6 +6,11 @@ git clone https://github.com/vuiseng9/optimum-intel
 cd optimum-intel && git checkout lm-ov-bench
 pip install -e .[openvino,nncf,tests]
 pip install tokenizers matplotlib pandas py-cpuinfo
+
+# use transformer 4.30.2
+git clone https://github.com/vuiseng9/transformers
+cd transformers && git checkout v4.30.2-lm-ov-bench
+pip install -e .
 ```
 
 ### Export IR
