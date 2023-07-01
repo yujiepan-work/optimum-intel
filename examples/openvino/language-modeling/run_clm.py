@@ -152,6 +152,24 @@ class ModelArguments:
             "help": "Path to NNCF configuration .json file for adapting the model to compression-enabled training."
         },
     )
+    ov_save_onnx: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "bool to instruct openvino backend to serialize onnx along with OV IR"
+            )
+        },
+    )
+    num_tx_block: int = field(
+        default=0,
+        metadata={
+            "help": (
+                "specify number of transformer blocks. "
+                "e.g. setting 14 for mobilebert will drop the later 10 out of the 24 tx block in mobilebert"
+                "Currently this only applies to mobilebert"
+            )
+        },
+    )
 
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
@@ -399,6 +417,13 @@ def main():
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
+    if model_args.num_tx_block > 0:
+        if config.model_type in ['opt', 'llama']:
+            config.num_hidden_layers = model_args.num_tx_block
+        elif config.model_type in ['gptj']:
+            config.n_layer = model_args.num_tx_block
+        else:
+            raise ValueError("--num_tx_block is not supported for model_type: {}".format(config.model_type))
 
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
@@ -581,9 +606,9 @@ def main():
         file_path = Path(model_args.nncf_compression_config).resolve()
         with safe_open(file_path) as f:
             compression = json.load(f)
-        ov_config = OVConfig(compression=compression)
+        ov_config = OVConfig(compression=compression, save_onnx_model=model_args.ov_save_onnx)
     else:
-        ov_config = OVConfig()
+        ov_config = OVConfig(save_onnx_model=model_args.ov_save_onnx)
     ov_config.log_dir = training_args.output_dir
 
     # Initialize our Trainer
