@@ -1,0 +1,43 @@
+[
+  {
+    "algorithm": "magnitude_sparsity",
+    "sparsity_init": 0.51,
+    "params": {
+      "sparsity_level_setting_mode": "layer-wise",
+    },
+    "ignored_scopes": [
+        "{re}.*Embedding",
+        "{re}.*lm_head*"
+    ]
+  },
+  {
+    "algorithm": "quantization",
+    "export_to_onnx_standard_ops": false,
+    "ignored_scopes": [
+      "{re}.*Embedding*",
+      "{re}.*__add___*",
+      "{re}.*layer_norm_*",
+      "{re}.*bmm_1",
+      // "{re}.*__truediv__*"
+    ],
+    "initializer": {
+      "batchnorm_adaptation": {
+        "num_bn_adaptation_samples": 0
+      },
+      "range": {
+        "num_init_samples": 30,
+        // "num_init_samples": 300,
+        "type": "mean_min_max"
+      }
+    },
+    "overflow_fix": "disable",
+    "preset": "mixed",
+    "scope_overrides": {
+      "activations": {
+        "{re}.*bmm_0": {
+          "mode": "symmetric"
+        }
+      }
+    }
+  }
+]
