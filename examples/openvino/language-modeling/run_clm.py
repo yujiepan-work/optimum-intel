@@ -420,6 +420,8 @@ def main():
     if model_args.num_tx_block > 0:
         if config.model_type in ['opt', 'llama']:
             config.num_hidden_layers = model_args.num_tx_block
+        elif config.model_type in ['gpt_neo']:
+            config.num_layers = model_args.num_tx_block
         elif config.model_type in ['gptj']:
             config.n_layer = model_args.num_tx_block
         else:
