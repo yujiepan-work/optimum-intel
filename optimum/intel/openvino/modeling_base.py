@@ -86,6 +86,8 @@ class OVBaseModel(PreTrainedModel):
         self.ov_config = ov_config if ov_config is not None else {"PERFORMANCE_HINT": "LATENCY"}
         self.preprocessors = kwargs.get("preprocessors", [])
         enable_compilation = kwargs.get("compile", True)
+        if kwargs.get("tld") is not None:
+            self.ov_config["CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE"]=kwargs.get("tld")
 
         if self.is_dynamic:
             height = -1 if self.export_feature == "image-classification" else None

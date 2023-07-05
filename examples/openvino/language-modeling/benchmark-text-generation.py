@@ -50,10 +50,10 @@ def create_prompt_of_length(ctx_len, tokenizer):
     return tokenizer.decode(prompt_token_ids)
 
 
-def create_openvino_text_generation_pipeline(model_id, use_cache, device="CPU"):
+def create_openvino_text_generation_pipeline(model_id, use_cache, device="CPU", tld=None):
     log.info("Create text generation pipeline with model_id: {} on device: {}".format(model_id, device))
     log.info("KV Cache bool: {}".format(use_cache))
-    model = OVModelForCausalLM.from_pretrained(model_id, use_cache=use_cache, device=device, bench_mode=True)
+    model = OVModelForCausalLM.from_pretrained(model_id, use_cache=use_cache, device=device, bench_mode=True, tld=tld)
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
     return pipe, model, tokenizer
@@ -218,6 +218,7 @@ def build_argparser():
         required=False,
         type=str,
     )
+    args.add_argument("--tld", help="sparse weight (de)compression threshold, between 0 and 1", default=None, required=False, type=float)
     return parser
 
 
@@ -226,6 +227,12 @@ def main():
 
     if args.bench_label is None:
         raise ValueError("Pls specify --bench_label <label> when running with --bench")
+
+    if args.tld is not None:
+        if (args.tld <= 0) or (args.tld >= 1):
+            raise ValueError("--tld must be > 0 and < 1")
+        if args.device.lower() != "cpu":
+            raise ValueError("--tld only works for CPU, specifically Xeon SPR")
 
     if args.bench_outdir is None:
         args.bench_outdir = os.path.join("./", args.bench_label)
@@ -237,7 +244,7 @@ def main():
     set_seed(42)
     model_id = args.model  # "vuiseng9/ov-gpt2-fp32-no-cache"
     pipe, model, tokenizer = create_openvino_text_generation_pipeline(
-        model_id, use_cache=(not args.disable_cache), device=args.device
+        model_id, use_cache=(not args.disable_cache), device=args.device, tld=args.tld,
     )
 
     # only create output when pipeline is created successfully, otherwise we need to delete unused folders
