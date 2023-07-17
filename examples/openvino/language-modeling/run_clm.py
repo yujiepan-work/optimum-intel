@@ -609,6 +609,8 @@ def main():
         with safe_open(file_path) as f:
             compression = json.load(f)
         ov_config = OVConfig(compression=compression, save_onnx_model=model_args.ov_save_onnx)
+        if isinstance(compression, dict) and compression['algorithm'] == 'NoCompressionAlgorithm':
+            ov_config.compression = []
     else:
         ov_config = OVConfig(save_onnx_model=model_args.ov_save_onnx)
     ov_config.log_dir = training_args.output_dir
